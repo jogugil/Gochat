@@ -1,1 +1,4 @@
-Frontend con node.js y Typescript y el backend (servidor chat) con Go
+ClientChat con node/Typescript (React/vite) y el backend (servidor chat) con Goland.
+Mecanismos de comunicación configurable:
+    - Nats
+    - Kafka
