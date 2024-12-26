@@ -1,10 +1,11 @@
 package nats
 
 import (
-	"backend/interfaces"
+	"backend/entities"
 	"errors"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
@@ -12,6 +13,11 @@ import (
 type BrokerNats struct {
 	conn    *nats.Conn
 	metrics sync.Map // Para almacenar métricas simuladas (o reales, si aplicable)
+}
+
+// GetMessagesFromId implements entities.MessageBroker.
+func (b *BrokerNats) GetMessagesFromId(roomId string, messageId uuid.UUID) ([]entities.Message, error) {
+	panic("unimplemented")
 }
 
 // CreateTopic implements interfaces.MessageBroker.
@@ -25,7 +31,7 @@ var (
 )
 
 // GetNatsBroker devuelve la instancia única del broker NATS, creándola si es necesario.
-func GetNatsBroker(url string) (interfaces.MessageBroker, error) {
+func GetNatsBroker(url string) (entities.MessageBroker, error) {
 	var err error
 	once.Do(func() {
 		// Solo creamos la instancia una vez.

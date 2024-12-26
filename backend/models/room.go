@@ -43,7 +43,7 @@ func (room *LocalRoom) SendMessage(user entities.User, message entities.Message)
 	log.Printf("SendMessage: User %v is sending message %v to room %s", user, message, room.RoomName)
 
 	// Key operation: Add the message to the broker
-	room.MessageBroker.Publish(user.RoomId.String(), entities.Message)
+	room.MessageBroker.PublishMessage (entities.Message, user.RoomId.String())
 
 	log.Printf("SendMessage: Message %v added successfully to room %s", message, room.RoomName)
 }

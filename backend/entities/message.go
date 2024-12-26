@@ -25,20 +25,6 @@ type Metadata struct {
 	OriginalLang string `json:"originallang"` // Idioma original
 }
 
-// Clase Mensaje
-type Message struct {
-	MessageId   uuid.UUID   `json:"messageid"`   // Identificador único
-	MessageType MessageType `json:"messagetype"` // Tipo de mensaje
-	SendDate    time.Time   `json:"senddate"`    // Fecha de envío
-	ServerDate  time.Time   `json:"serverdate"`  // Fecha en el servidor
-	Nickname    string      `json:"nickname"`    // Nombre del remitente
-	Token       string      `json:"tokenjwt"`    // JWT del remitente
-	MessageText string      `json:"messagetext"` // Contenido del mensaje
-	RoomID      uuid.UUID   `json:"roomid"`      // Sala destino
-	RoomName    string      `json:"roomname"`    // Nombre de la sala
-	Metadata    Metadata    `json:"metadata"`    // Metadatos adicionales
-}
-
 // KafkaMessage represents the structure of a message in Kafka
 type KafkaMessage struct {
 	Key     string            `json:"key"`
@@ -51,4 +37,18 @@ type NatsMessage struct {
 	Subject string            `json:"subject"`
 	Data    string            `json:"data"`
 	Header  map[string]string `json:"header"`
+}
+
+// Clase Mensaje
+type Message struct {
+	MessageId   uuid.UUID   `json:"messageid"`   // Identificador único
+	MessageType MessageType `json:"messagetype"` // Tipo de mensaje
+	SendDate    time.Time   `json:"senddate"`    // Fecha de envío
+	ServerDate  time.Time   `json:"serverdate"`  // Fecha en el servidor
+	Nickname    string      `json:"nickname"`    // Nombre del remitente
+	Token       string      `json:"tokenjwt"`    // JWT del remitente
+	MessageText string      `json:"messagetext"` // Contenido del mensaje
+	RoomID      uuid.UUID   `json:"roomid"`      // Sala destino
+	RoomName    string      `json:"roomname"`    // Nombre de la sala
+	Metadata    Metadata    `json:"metadata"`    // Metadatos adicionales
 }

@@ -9,27 +9,29 @@ import (
 	"github.com/google/uuid" // Create unique UUIDs
 )
 
-// Alias for the User type
-type LocalUser entities.User
+// Definición de LocalUser utilizando composición
+type LocalUser struct {
+	User entities.User
+}
 
 // Implementation of the methods for the UserChat interface
 func (u *LocalUser) StartSession() bool {
-	u.LastActionTime = time.Now()
-	u.State = types.Active
+	u.User.LastActionTime = time.Now()
+	u.User.State = types.Active
 	return true
 }
 
 func (u *LocalUser) EndSession() bool {
-	u.State = types.Inactive
+	u.User.State = types.Inactive
 	return true
 }
 
 func (u *LocalUser) UpdateStatus() {
-	u.State = types.Active
+	u.User.State = types.Active
 }
 
 func (u *LocalUser) JoinRoom(room *entities.Room) {
-	u.RoomId = room.RoomId
+	u.User.RoomId = room.RoomId
 }
 
 func (u *LocalUser) LeaveRoom() {
@@ -37,7 +39,7 @@ func (u *LocalUser) LeaveRoom() {
 	if err != nil {
 		log.Printf("error setting room ID to nil: %v", err)
 	}
-	u.RoomId = roomId // Now the room reference is removed
+	u.User.RoomId = roomId // Now the room reference is removed
 }
 
 func NewGoChatUser(nickname string, room *entities.Room) *entities.User {
