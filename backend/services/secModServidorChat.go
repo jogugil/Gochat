@@ -3,172 +3,259 @@ package services
 import (
 	"backend/entities"
 	"backend/models"
-	"errors"
+	"backend/persistence"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"os"
 	"sync"
 
 	"github.com/google/uuid"
 )
 
-type SecModServidorChat struct {
-	GestionSalas    *GestionSalas
-	GestionUsuarios *GestionUsuarios
+type RoomManagement struct {
+	FixedRooms  map[uuid.UUID]*entities.Room // Map of fixed rooms in memory
+	MainRoom    *entities.Room               // Single main room
+	mu          sync.RWMutex                 // Read/write mutex
+	persistence *entities.Persistence        // Persistence to store data
+	once        sync.Once                    // To ensure single initialization
 }
 
-var onceServerChat sync.Once
-var instanciaSecMod *SecModServidorChat
+var instance *RoomManagement // Singleton instance of RoomManagement
 
-func CrearSecModServidorChat(persistence *entities.Persistencia, configRoomFile string) *SecModServidorChat {
-	onceServerChat.Do(func() {
-		instanciaSecMod = &SecModServidorChat{
-			GestionSalas:    NuevaGestionSalas(persistence, configRoomFile),
-			GestionUsuarios: NuevaGestionUsuarios(),
+// NewRoomManagement creates and returns a Singleton instance of RoomManagement
+
+func NewRoomManagement(persistence *entities.Persistence, configFile string) *RoomManagement {
+	// Ensure only one instance is created
+	if instance == nil {
+		instance = &RoomManagement{
+			FixedRooms:  make(map[uuid.UUID]*entities.Room), // Initialize the map
+			persistence: persistence,                        // Assign persistence
 		}
+	}
+	// Configuration and data load only once
+	instance.once.Do(func() {
+		log.Println("RoomManagement:  NewRoomManagement:  Initializing instance configuration.")
+		if configFile != "" {
+			err := instance.LoadFixedRoomsFromFile(configFile)
+			if err != nil {
+				log.Fatalf("RoomManagement:  NewRoomManagement: Error loading configuration: %v", err)
+			}
+		}
+		log.Println("RoomManagement:  NewRoomManagement: Configuration completed.")
 	})
-	if instanciaSecMod.GestionSalas == nil {
-		log.Fatalf("SecModServidorChat: CrearSecModServidorChat: GestionSalas no está configurado correctamente")
-	}
-	return instanciaSecMod
+	return instance
 }
 
-// Función para obtener la instancia existente, sin parámetros
-func GetSecModServidorChat() (*SecModServidorChat, error) {
-	if instanciaSecMod == nil {
-		return nil, errors.New("SecModServidorChat: la instancia no ha sido creada. Debes llamar a CrearSecModServidorChat primero")
+func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: Loading rooms from file: %s", configFile)
+	if rm.FixedRooms == nil {
+		rm.FixedRooms = make(map[uuid.UUID]*entities.Room)
 	}
+	var persis, err = persistence.GetDBInstance()
 
-	return instanciaSecMod, nil
-}
-
-// ValidarTokenAccion valida si un token es correcto y si el nickname está asociado a ese token
-func (secMod *SecModServidorChat) ValidarTokenAccion(token, nickname, opt string) bool {
-	log.Printf("SecModServidorChat: ValidarTokenAccion: Validando token: %s, nickname: %s, acción: %s\n", token, nickname, opt)
-	usuario, err := secMod.GestionUsuarios.BuscarUsuarioPorToken(token)
-	if err != nil || usuario.Nickname != nickname {
-		log.Println("SecModServidorChat: ValidarTokenAccion: Token o nickname inválido")
-		return false
-	}
-
-	// Validación de la acción (opt) se puede agregar aquí según el tipo de acción
-	switch opt {
-	case "enviarMensaje":
-		log.Println("SecModServidorChat: ValidarTokenAccion: Acción válida: enviarMensaje")
-		return true
-	case "verSala":
-		log.Println("SecModServidorChat: ValidarTokenAccion: Acción válida: verSala")
-		return true
-	default:
-		log.Println("SecModServidorChat: ValidarTokenAccion: Acción no válida")
-		return false
-	}
-}
-
-// CrearTokenSesion genera un nuevo token para un usuario al registrarse
-func (secMod *SecModServidorChat) CrearTokenSesion(nickname string) string {
-	log.Printf("SecModServidorChat: CrearTokenSesion: Creando token de sesión para el usuario: %s\n", nickname)
-	return models.CrearTokenSesion(nickname)
-}
-
-// EjecutarLogin maneja el proceso de login
-func (secMod *SecModServidorChat) EjecutarLogin(nickname string) (*entities.User, error) {
-	log.Printf("SecModServidorChat: EjecutarLogin:Ejecutando login para el usuario: %s\n", nickname)
-
-	// Llamar a RegistrarUsuario para asegurarnos de que el usuario esté registrado
-	if !secMod.GestionUsuarios.VerificarUsuarioExistente(nickname) {
-		log.Println("SecModServidorChat: EjecutarLogin: CODL00:El nickname ya está en uso")
-		return nil, fmt.Errorf("EjecutarLogin: CODL00:el nickname ya está en uso")
-	}
-
-	token := secMod.CrearTokenSesion(nickname)
-	if token == "" {
-		log.Println("SecModServidorChat: EjecutarLogin: CODL01:No se pudo crear el token")
-		return nil, fmt.Errorf("EjecutarLogin: CODL01:no se pudo crear el token")
-	}
-
-	newUser, err := secMod.GestionUsuarios.RegistrarUsuario(nickname, token, secMod.GestionSalas.SalaPrincipal)
 	if err != nil {
-		log.Printf("SecModServidorChat: EjecutarLogin:CODL02:  Error al registrar el usuario: %v\n", err)
-		return nil, fmt.Errorf("EjecutarLogin: CODL02: error al registrar el usuario %v", err)
-	}
-
-	secMod.GestionSalas.SalaPrincipal.Users = append(secMod.GestionSalas.SalaPrincipal.Users, *newUser)
-	newUser.RoomId = secMod.GestionSalas.SalaPrincipal.RoomId
-	newUser.RoomName = secMod.GestionSalas.SalaPrincipal.RoomName
-
-	// Mostrar el mensaje de éxito
-	log.Printf("SecModServidorChat: EjecutarLogin: Usuario %s logueado con el token %s\n", nickname, token)
-	log.Printf("SecModServidorChat: EjecutarLogin: Sala principal: %s (ID: %v)\n", secMod.GestionSalas.SalaPrincipal.RoomName, secMod.GestionSalas.SalaPrincipal.RoomId)
-
-	// Devolver el usuario con los detalles de la sala
-	return newUser, nil
-}
-
-// EjecutarEnvioMensaje permite a un usuario enviar un mensaje
-func (secMod *SecModServidorChat) EjecutarEnvioMensaje(nickname, token, mensaje string, idSala uuid.UUID) error {
-	log.Printf("SecModServidorChat: EjecutarEnvioMensaje: Ejecutando envío de mensaje: %s para el usuario: %s en la sala: %v\n", mensaje, nickname, idSala)
-
-	// Validar si el usuario está autorizado a enviar el mensaje
-
-	token_usuario, err := secMod.GestionUsuarios.ObtenerTokenDeUsuario(nickname)
-	if err != nil {
-		log.Println("SecModServidorChat: EjecutarEnvioMensaje: Token inválido o acción no permitida")
-		return errors.New("SecModServidorChat: EjecutarEnvioMensaje: CODM00:token inválido o acción no permitida")
-	}
-
-	if !secMod.ValidarTokenAccion(token_usuario, nickname, "enviarMensaje") {
-		log.Println("SecModServidorChat: EjecutarEnvioMensaje: Token inválido o acción no permitida")
-		return errors.New("SecModServidorChat: EjecutarEnvioMensaje: CODM01:token inválido o acción no permitida")
-	}
-
-	if token_usuario != token {
-		log.Println("SecModServidorChat: EjecutarEnvioMensaje: Token no coincide")
-		return errors.New("SecModServidorChat: EjecutarEnvioMensaje: CODM02:token inválido o acción no permitida")
-	}
-	usuario, err := secMod.GestionUsuarios.BuscarUsuarioPorToken(token_usuario)
-	if err != nil {
-		log.Printf("SecModServidorChat: EjecutarEnvioMensaje: CODM03:Error al BuscarUsuarioPorToken  : %v\n", err)
-		return err
-	}
-	// Llamar a la lógica para enviar el mensaje
-	err = secMod.GestionSalas.EnviarMensaje(idSala, nickname, mensaje, usuario)
-	if err != nil {
-		log.Printf("SecModServidorChat: EjecutarEnvioMensaje: CODM04: Error al enviar el mensaje: %v\n", err)
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error creating MongoPersistence instance:%v", err)
 		return err
 	}
 
-	log.Printf("SecModServidorChat: EjecutarEnvioMensaje: CODM05:Mensaje enviado por %s: %s\n", nickname, mensaje)
+	rm.MainRoom = &entities.Room{
+		RoomId:         uuid.New(),
+		RoomName:       "Main Room",
+		RoomType:       "Main",
+		MessageHistory: entities.NewCircularQueue(persis),
+	}
+
+	file, err := os.Open(configFile)
+	if err != nil {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error opening file: %v", err)
+		return err
+	}
+	defer file.Close()
+
+	byteValue, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error reading file: %v", err)
+		return err
+	}
+
+	var rooms []map[string]interface{}
+	err = json.Unmarshal(byteValue, &rooms)
+	if err != nil {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing JSON: %v", err)
+		return err
+	}
+
+	// Use RLock to read FixedRooms concurrently.
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	for _, roomData := range rooms {
+		roomID, err_parse := uuid.Parse(roomData["id"].(string))
+		if err_parse != nil {
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v", err_parse)
+			return err_parse
+		}
+		var persis, err_per = persistence.GetDBInstance()
+
+		if err_per != nil {
+			log.Printf("RoomManagement: Error creating MongoPersistence instance:%v", err_per)
+			return err_per
+		}
+		room := &entities.Room{
+			RoomId:         roomID,
+			RoomName:       roomData["name"].(string),
+			RoomType:       "Fixed",
+			MessageHistory: entities.NewCircularQueue(persis),
+		}
+		rm.FixedRooms[roomID] = room
+	}
+	log.Println("RoomManagement: LoadFixedRoomsFromFile: Load completed.")
 	return nil
 }
 
-// EjecutarVerSala permite a un usuario ver la lista de mensajes en una sala
-func (secMod *SecModServidorChat) EjecutarVerSala(nickname string, idSala uuid.UUID) error {
-	log.Printf("SecModServidorChat: EjecutarVerSala: Ejecutando ver sala: %v para el usuario: %s\n", idSala, nickname)
+func (rm *RoomManagement) CreateTemporaryRoom(name string) *entities.Room {
+	log.Printf("RoomManagement: CreateTemporaryRoom: Creating temporary room with name: %s", name)
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 
-	// Validar si el usuario está autorizado a ver la sala
-	token, err := secMod.GestionUsuarios.ObtenerTokenDeUsuario(nickname)
+	if rm.persistence == nil {
+		log.Fatal("RoomManagement: CreateTemporaryRoom: Persistence not initialized.")
+	}
+
+	room := &entities.Room{
+		RoomId:         uuid.New(),
+		RoomName:       name,
+		RoomType:       "Temporary",
+		MessageHistory: entities.NewCircularQueue(rm.persistence),
+	}
+	log.Printf("RoomManagement: CreateTemporaryRoom: Temporary room created with ID: %s", room.RoomId)
+	return room
+}
+
+func (rm *RoomManagement) GetRoomByID(roomID uuid.UUID) (*entities.Room, error) {
+	log.Printf("RoomManagement: GetRoomByID: Searching for room with ID: %s", roomID)
+
+	rm.mu.RLock()
+	log.Printf("RoomManagement: GetRoomByID: Lock acquired for reading room with ID %s", roomID)
+	defer func() {
+		rm.mu.RUnlock()
+		log.Printf("RoomManagement: GetRoomByID: Lock released for reading room with ID %s", roomID)
+	}()
+
+	if rm.MainRoom != nil && rm.MainRoom.RoomId == roomID {
+		log.Println("RoomManagement: GetRoomByID: Main room found.")
+		return rm.MainRoom, nil
+	}
+
+	if room, exists := rm.FixedRooms[roomID]; exists {
+		log.Printf("RoomManagement: GetRoomByID: Fixed room found with ID: %s", roomID)
+		return room, nil
+	}
+
+	log.Printf("RoomManagement: GetRoomByID: Room not found with ID: %s", roomID)
+	return nil, fmt.Errorf("the room with ID %s does not exist", roomID)
+}
+
+func (rm *RoomManagement) SendMessage(roomID uuid.UUID, nickname, message string, user entities.User) error {
+	log.Printf("RoomManagement: SendMessage: Sending message to room with ID: %s", roomID)
+
+	// First, we get the room with RLock, as we are reading
+	room, err := rm.GetRoomByID(roomID)
 	if err != nil {
-		log.Println("SecModServidorChat: EjecutarVerSala: Token inválido o acción no permitida")
-		return errors.New("SecModServidorChat: EjecutarVerSala: token inválido o acción no permitida")
+		log.Printf("RoomManagement: SendMessage: Error getting room: %v", err)
+		return err
 	}
 
-	if !secMod.ValidarTokenAccion(token, nickname, "verSala") {
-		log.Println("SecModServidorChat: EjecutarVerSala: Token inválido o acción no permitida")
-		return errors.New("SecModServidorChat: EjecutarVerSala: token inválido o acción no permitida")
-	}
+	newMessage := models.CreateMessageWithDate(message, user, roomID, room.RoomName, user.LastActionTime)
+	log.Printf("RoomManagement: New message created: %+v\n", newMessage)
 
-	// Llamar a la lógica para ver los mensajes de la sala
-	mensajes, err := secMod.GestionSalas.ObtenerMensajesDesdeCola(idSala)
-	if err != nil {
-		log.Printf("SecModServidorChat: EjecutarVerSala: Error al obtener los mensajes de la sala: %v\n", err)
-		return fmt.Errorf("SecModServidorChat: EjecutarVerSala: token inválido o acción no permitida %v", err)
-	}
-
-	// Mostrar los mensajes
-	log.Println("SecModServidorChat: EjecutarVerSala: Mensajes en la sala:")
-	for _, msg := range mensajes {
-		log.Printf("[%s]: %s\n", msg.Nickname, msg.MessageText)
-	}
-
+	// Modify message history
+	room.MessageHistory.Enqueue(*newMessage, room.RoomId)
+	log.Printf("RoomManagement: SendMessage: Message sent to room with ID: %s - %v \n", roomID, newMessage)
 	return nil
+}
+
+// Function to get messages from a room
+func (rm *RoomManagement) GetMessagesFromId(roomID uuid.UUID, messageID uuid.UUID) ([]entities.Message, error) {
+	log.Printf("RoomManagement: GetMessagesFromId: Getting messages from ID %s in room %s", messageID, roomID)
+	rm.mu.RLock() // Reading, can be done concurrently
+	defer rm.mu.RUnlock()
+
+	room, err := rm.GetRoomByID(roomID)
+	if err != nil {
+		log.Printf("RoomManagement: GetMessagesFromId: Error getting room: %v", err)
+		return nil, fmt.Errorf("the room with ID %s does not exist", roomID)
+	}
+	if room == nil {
+		log.Printf("RoomManagement: GetMessagesFromId: Error getting room: room is nil")
+		return nil, fmt.Errorf("RoomManagement: room not found with ID: %s", roomID)
+	}
+	queue := room.MessageHistory
+	// Check if the queue is nil
+	if queue == nil {
+		log.Println("RoomManagement: GetMessagesFromId: Error: The queue is nil.")
+		return nil, fmt.Errorf("RoomManagement: GetMessagesFromId: the queue is nil in room with ID %s ", roomID)
+	}
+
+	messages, err := queue.GetMessagesFromId(roomID, messageID)
+	if err != nil {
+		log.Printf("RoomManagement: GetMessagesFromId: Error getting messages: %v", err)
+		return nil, fmt.Errorf("RoomManagement: error in GetByLastMessageId: %v", err)
+	}
+
+	log.Printf("RoomManagement: GetMessagesFromId: Messages obtained successfully (%d messages)", len(messages))
+	return messages, nil
+}
+
+// Function to get all messages from a room
+func (rm *RoomManagement) GetMessages(roomID uuid.UUID) ([]entities.Message, error) {
+	log.Printf("RoomManagement: GetMessages: Getting all messages from room %s", roomID)
+	rm.mu.RLock() // Reading, can be done concurrently
+	defer rm.mu.RUnlock()
+
+	room, err := rm.GetRoomByID(roomID)
+	if err != nil {
+		log.Printf("RoomManagement: GetMessages: Error getting room: %v", err)
+		return nil, fmt.Errorf("the room with ID %s does not exist", roomID)
+	}
+	queue := room.MessageHistory
+	messages, err := queue.GetAll(roomID)
+	if err != nil {
+		log.Printf("RoomManagement: GetMessages: Error getting messages: %v", err)
+		return nil, fmt.Errorf("RoomManagement: error in GetMessages: %v", err)
+	}
+
+	log.Printf("RoomManagement: GetMessages: Messages obtained successfully (%d messages)", len(messages))
+	return messages, nil
+}
+
+func (rm *RoomManagement) GetMessageCount(roomID uuid.UUID, messageID uuid.UUID, count int) ([]entities.Message, error) {
+	log.Printf("RoomManagement: GetMessageCount: Getting %d messages from room %s", count, roomID)
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	// Pre-validation
+	if roomID == uuid.Nil || messageID == uuid.Nil || count == 0 {
+		log.Printf("RoomManagement: GetMessageCount: Invalid request, missing roomID, messageID, or count.")
+		return nil, fmt.Errorf("missing parameters")
+	}
+
+	// Get room
+	room, err := rm.GetRoomByID(roomID)
+	if err != nil {
+		log.Printf("RoomManagement: GetMessageCount: Error getting room: %v", err)
+		return nil, err
+	}
+
+	// Get messages
+	messages, err := room.MessageHistory.GetMessagesWithLimit(messageID, count, room.RoomId)
+	if err != nil {
+		log.Printf("RoomManagement: GetMessageCount: Error getting messages with limit: %v", err)
+		return nil, fmt.Errorf("error in GetMessagesWithLimit: %v", err)
+	}
+
+	log.Printf("RoomManagement: GetMessageCount: Retrieved %d messages", len(messages))
+	return messages, nil
 }

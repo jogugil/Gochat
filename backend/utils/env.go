@@ -1,4 +1,4 @@
-// backend/utilities/env.go
+// /backend/utilities/env.go
 package utils
 
 import (
@@ -10,28 +10,21 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Estructura para almacenar las variables de entorno cargadas
+// Structure to store the loaded environment variables
 var envVars map[string]string
 var once sync.Once
 
-// RecargarVariablesDeEntorno recarga las variables de entorno desde el archivo .env en caliente
-func RecargarVariablesDeEntorno() {
-	// Volver a cargar las variables de entorno desde el archivo .env
+// ReloadEnvironmentVariables reloads the environment variables from the .env file in real-time
+func ReloadEnvironmentVariables() {
+	// Reload the environment variables from the .env file
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error recargando el archivo .env: %w", err)
+		log.Fatal("Error reloading the .env file: %w", err)
 	}
 
-	// Limpiar el mapa de variables anteriores
+	// Clear the previous variables map
 	envVars = make(map[string]string)
 
-	// Cargar nuevamente las variables de entorno
-	//for _, e := range os.Environ() {
-	//parts := splitEnv(e)
-	//if len(parts) == 2 {
-	//envVars[parts[0]] = parts[1]
-	//}
-	//}
-	//Cargamos las variables entorno una a una u le ponermos el nombre que quiera
+	// Reload the environment variables one by one and assign custom names
 	envVars["SecretKey"] = os.Getenv("SECRET_KEY")
 	envVars["PortServer"] = os.Getenv("EXP_PORT")
 	envVars["NameServer"] = os.Getenv("NAME_SERVER")
@@ -45,39 +38,32 @@ func RecargarVariablesDeEntorno() {
 	envVars["GIN_MODE"] = os.Getenv("GIN_MODE")
 }
 
-// CargarVariablesDeEntorno carga las variables de entorno desde un archivo .env
-func CargarVariablesDeEntorno() {
+// LoadEnvironmentVariables loads the environment variables from a .env file
+func LoadEnvironmentVariables() {
 	once.Do(func() {
-		// Cargar el archivo .env
+		// Load the .env file
 		if err := godotenv.Load(); err != nil {
-			log.Fatal("CargarVariablesDeEntorno: Error cargando el archivo .env")
+			log.Fatal("LoadEnvironmentVariables: Error loading the .env file")
 		}
 
-		// Inicializar el mapa para guardar las variables de entorno
+		// Initialize the map to store environment variables
 		envVars = make(map[string]string)
 
-		// Cargar todas las variables del archivo .env en memoria
-		//for _, e := range os.Environ() {
-		//parts := splitEnv(e)
-		//if len(parts) == 2 {
-		//envVars[parts[0]] = parts[1]
-		//}
-		//}
-		//Cargamos las variables entorno una a una u le ponermos el nombre que quiera
-		RecargarVariablesDeEntorno()
+		// Load all environment variables into memory
+		ReloadEnvironmentVariables()
 	})
 }
 
-// ObtenerVariableDeEntorno devuelve el valor de una variable de entorno cargada en memoria
-func ObtenerVariableDeEntorno(nombreVariable string) (string, error) {
-	valor, existe := envVars[nombreVariable]
-	if !existe {
-		return "", fmt.Errorf("la variable de entorno %s no está configurada", nombreVariable)
+// GetEnvironmentVariable returns the value of a loaded environment variable
+func GetEnvVariable(variableName string) (string, error) {
+	value, exists := envVars[variableName]
+	if !exists {
+		return "", fmt.Errorf("the environment variable %s is not configured", variableName)
 	}
-	return valor, nil
+	return value, nil
 }
 
-// splitEnv divide una variable de entorno en su nombre y valor
+// splitEnv splits an environment variable into its name and value
 func splitEnv(env string) []string {
 	parts := make([]string, 2)
 	equalsIndex := -1

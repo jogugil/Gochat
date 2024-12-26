@@ -13,7 +13,7 @@ type User struct {
 	Nickname       string
 	Token          string
 	LastActionTime time.Time
-	State          types.EstadoUsuario
+	State          types.UserStatus
 	Type           string
 	RoomId         uuid.UUID
 	RoomName       string

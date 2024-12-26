@@ -13,74 +13,74 @@ type Token struct {
 	Token string `json:"token"`
 }
 
-// Estructura que representa los claims del JWT (el payload)
+// Structure representing the JWT claims (payload)
 type Claims struct {
 	Nickname string `json:"nickname"`
 	jwt.RegisteredClaims
 }
 
-// CrearTokenSesion genera un token JWT
-func CrearTokenSesion(nickname string) string {
-	// Obtener la clave secreta desde el entorno
-	secretKey, err := utils.ObtenerVariableDeEntorno("SecretKey")
+// CreateSessionToken creates a JWT token
+func CreateSessionToken(nickname string) string {
+	// Get the secret key from the environment
+	secretKey, err := utils.GetEnvVariable("SecretKey")
 	if err != nil {
-		log.Printf("Error al obtener la clave secreta: %v", err)
+		log.Printf("Error retrieving the secret key: %v", err)
 		return ""
 	}
 
-	// Definir los datos (claims) del token
+	// Define the token's claims
 	claims := &Claims{
 		Nickname: nickname,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)), // Token válido por 24 horas
-			Issuer:    "ChatSphere",                                       // Emisor del token (puede ser un nombre o dominio)
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)), // Token valid for 24 hours
+			Issuer:    "ChatSphere",                                       // Token issuer (can be a name or domain)
 		},
 	}
 
-	// Crear el token con los claims y firmarlo con la clave secreta
+	// Create the token with claims and sign it with the secret key
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	// Firmar el token
+	// Sign the token
 	signedToken, err := token.SignedString([]byte(secretKey))
 	if err != nil {
-		log.Println("Error al generar el token: ", err)
+		log.Println("Error generating the token: ", err)
 		return ""
 	}
 
 	return signedToken
 }
 
-// ValidarTokenSesion valida un token JWT y devuelve el nickname si es válido
-func ValidarTokenSesion(tokenStr string) (string, error) {
-	// Obtener la clave secreta desde el entorno
-	secretKey, err := utils.ObtenerVariableDeEntorno("SecretKey")
+// ValidateSessionToken validates a JWT token and returns the nickname if valid
+func ValidateSessionToken(tokenStr string) (string, error) {
+	// Get the secret key from the environment
+	secretKey, err := utils.GetEnvVariable("SecretKey")
 	if err != nil {
-		return "", fmt.Errorf("error al obtener la clave secreta: %v", err)
+		return "", fmt.Errorf("error retrieving the secret key: %v", err)
 	}
 
-	// Parsear el token usando la clave secreta
+	// Parse the token using the secret key
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Verificar que el método de firma del token sea el esperado
+		// Verify the token's signing method is as expected
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("el token tiene un método de firma inesperado: %v", token.Header["alg"])
+			return nil, fmt.Errorf("unexpected signing method in token: %v", token.Header["alg"])
 		}
 		return []byte(secretKey), nil
 	})
 
-	// Si hay error al parsear el token, devolver el error
+	// If there's an error parsing the token, return the error
 	if err != nil {
-		return "", fmt.Errorf("error al parsear el token: %v", err)
+		return "", fmt.Errorf("error parsing the token: %v", err)
 	}
 
-	// Verificar que el token sea válido
+	// Verify the token is valid
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		// Comprobar si el token ha expirado
+		// Check if the token has expired
 		if claims.ExpiresAt.Time.Before(time.Now()) {
-			return "", fmt.Errorf("el token ha expirado")
+			return "", fmt.Errorf("the token has expired")
 		}
-		// Si todo es correcto, devolver el nickname
+		// If everything is correct, return the nickname
 		return claims.Nickname, nil
 	}
 
-	return "", fmt.Errorf("token no válido")
+	return "", fmt.Errorf("invalid token")
 }

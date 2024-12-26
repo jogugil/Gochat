@@ -10,106 +10,106 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestTuFuncionMongoDB() {
-	// Simulando una instancia de MongoPersistencia
-	uri := "mongodb://localhost:27017" // Cambia esto según tu URI de MongoDB
+func TestYourMongoDBFunction() {
+	// Simulating a MongoPersistence instance
+	uri := "mongodb://localhost:27017" // Change this according to your MongoDB URI
 	dbName := "chatDB"
-	persistencia, err := NuevaMongoPersistencia(uri, dbName)
+	persistence, err := NewMongoPersistence(uri, dbName)
 	if err != nil {
-		log.Fatalf("Error al crear la instancia de persistencia: %v", err)
+		log.Fatalf("Error creating the persistence instance: %v", err)
 	}
-	idsala, err := uuid.Parse("10000000-0000-0000-0000-000000000010") //ponemos  un id de sala
+	roomId, err := uuid.Parse("10000000-0000-0000-0000-000000000010") // Using a room ID
 	if err != nil {
-		log.Printf("error a poner nil una sla del usuario: %v", err)
+		log.Printf("Error setting room for user: %v", err)
 	}
-	// Crear un usuario de prueba
-	usuario := &entities.User{
+	// Create a test user
+	user := &entities.User{
 		UserId:         uuid.New().String(),
-		Nickname:       "usuario_test",
+		Nickname:       "test_user",
 		Token:          "token_123",
 		LastActionTime: time.Now(),
-		State:          types.Activo,
+		State:          types.Active,
 		Type:           "regular",
-		RoomId:         idsala, // Suponiendo que puede ser nil
-		RoomName:       "SalaId",
+		RoomId:         roomId, // Assuming it could be nil
+		RoomName:       "RoomId",
 	}
 
-	// 1. Test de GuardarUsuario
-	log.Println("Iniciando prueba de GuardarUsuario...")
+	// 1. Test SaveUser
+	log.Println("Starting SaveUser test...")
 	startTime := time.Now()
-	err = (*persistencia).GuardarUsuario(usuario)
+	err = (*persistence).SaveUser(user)
 	duration := time.Since(startTime)
 	if err != nil {
-		log.Printf("Error en GuardarUsuario: %v\n", err)
+		log.Printf("Error in SaveUser: %v\n", err)
 	} else {
-		log.Printf("GuardarUsuario completado en %v\n", duration)
+		log.Printf("SaveUser completed in %v\n", duration)
 	}
 
-	// 2. Test de GuardarSala
-	sala := entities.Room{
+	// 2. Test SaveRoom
+	room := entities.Room{
 		RoomId:   uuid.New(),
-		RoomName: "SalaTest",
+		RoomName: "TestRoom",
 	}
-	log.Println("Iniciando prueba de GuardarSala...")
+	log.Println("Starting SaveRoom test...")
 	startTime = time.Now()
-	err = (*persistencia).GuardarSala(sala)
+	err = (*persistence).SaveRoom(room)
 	duration = time.Since(startTime)
 	if err != nil {
-		log.Printf("Error en GuardarSala: %v\n", err)
+		log.Printf("Error in SaveRoom: %v\n", err)
 	} else {
-		log.Printf("GuardarSala completado en %v\n", duration)
+		log.Printf("SaveRoom completed in %v\n", duration)
 	}
 
-	// 3. Test de ObtenerSala
-	log.Println("Iniciando prueba de ObtenerSala...")
+	// 3. Test GetRoom
+	log.Println("Starting GetRoom test...")
 	startTime = time.Now()
-	_, err = (*persistencia).ObtenerSala(sala.RoomId)
+	_, err = (*persistence).GetRoom(room.RoomId)
 	duration = time.Since(startTime)
 	if err != nil {
-		log.Printf("Error en ObtenerSala: %v\n", err)
+		log.Printf("Error in GetRoom: %v\n", err)
 	} else {
-		log.Printf("ObtenerSala completado en %v\n", duration)
+		log.Printf("GetRoom completed in %v\n", duration)
 	}
 
-	// 4. Test de GuardarMensaje
-	mensaje := &entities.Message{
+	// 4. Test SaveMessage
+	message := &entities.Message{
 		MessageId:   uuid.New(),
-		Nickname:    "usuario_test",
+		Nickname:    "test_user",
 		SendDate:    time.Now(),
-		RoomID:      sala.RoomId,
-		RoomName:    sala.RoomName,
+		RoomID:      room.RoomId,
+		RoomName:    room.RoomName,
 		Token:       "token_123",
-		MessageText: "Este es un mensaje de prueba",
+		MessageText: "This is a test message",
 	}
-	log.Println("Iniciando prueba de GuardarMensaje...")
+	log.Println("Starting SaveMessage test...")
 	startTime = time.Now()
-	err = (*persistencia).GuardarMensaje(mensaje)
+	err = (*persistence).SaveMessage(message)
 	duration = time.Since(startTime)
 	if err != nil {
-		log.Printf("Error en GuardarMensaje: %v\n", err)
+		log.Printf("Error in SaveMessage: %v\n", err)
 	} else {
-		log.Printf("GuardarMensaje completado en %v\n", duration)
-	}
-
-	// 5. Test de ObtenerMensajesDesdeSala
-	log.Println("Iniciando prueba de ObtenerMensajesDesdeSala...")
-	startTime = time.Now()
-	_, err = (*persistencia).ObtenerMensajesDesdeSala(sala.RoomId)
-	duration = time.Since(startTime)
-	if err != nil {
-		log.Printf("Error en ObtenerMensajesDesdeSala: %v\n", err)
-	} else {
-		log.Printf("ObtenerMensajesDesdeSala completado en %v\n", duration)
+		log.Printf("SaveMessage completed in %v\n", duration)
 	}
 
-	// 6. Test de ObtenerMensajesDesdeId
-	log.Println("Iniciando prueba de ObtenerMensajesDesdeId...")
+	// 5. Test GetMessagesFromRoom
+	log.Println("Starting GetMessagesFromRoom test...")
 	startTime = time.Now()
-	_, err = (*persistencia).ObtenerMensajesDesdeSalaPorId(sala.RoomId, mensaje.MessageId)
+	_, err = (*persistence).GetMessagesFromRoom(room.RoomId)
 	duration = time.Since(startTime)
 	if err != nil {
-		log.Printf("Error en ObtenerMensajesDesdeId: %v\n", err)
+		log.Printf("Error in GetMessagesFromRoom: %v\n", err)
 	} else {
-		log.Printf("ObtenerMensajesDesdeId completado en %v\n", duration)
+		log.Printf("GetMessagesFromRoom completed in %v\n", duration)
+	}
+
+	// 6. Test GetMessagesFromRoomById
+	log.Println("Starting GetMessagesFromRoomById test...")
+	startTime = time.Now()
+	_, err = (*persistence).GetMessagesFromRoomById(room.RoomId, message.MessageId)
+	duration = time.Since(startTime)
+	if err != nil {
+		log.Printf("Error in GetMessagesFromRoomById: %v\n", err)
+	} else {
+		log.Printf("GetMessagesFromRoomById completed in %v\n", duration)
 	}
 }

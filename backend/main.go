@@ -96,7 +96,7 @@ func main() {
 		return
 	}
 
-	secMod := services.CrearSecModServidorChat(persistencia, "salas_config.json")
+	secMod := services.CrearSecModServidorChat(persistencia, "gochat_config.json")
 	salasManager := secMod.GestionSalas
 
 	// Imprimimos la sala principal

@@ -15,378 +15,381 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// Configuración de MongoDB (puede ser configurada en la propia estructura de MongoPersistencia)
+// MongoDB Configuration (can be set up in the MongoPersistence structure itself)
 
-// Configuración de correo
+// Email Configuration
 
-var mongoInstance *MongoPersistencia
+var mongoInstance *MongoPersistence
 var onceMongodb sync.Once
 
-type MongoPersistencia struct {
+type MongoPersistence struct {
 	client *mongo.Client
 	db     *mongo.Database
 }
 
-// NuevaMongoPersistencia crea o devuelve una instancia de MongoPersistencia con pool de conexiones
-func NuevaMongoPersistencia(uri, dbName string) (*entities.Persistencia, error) {
-	log.Printf("MongoPersistencia:  NuevaMongoPersistencia: Creando nueva instancia de MongoPersistencia con URI: %s y DB: %s\n", uri, dbName)
+// NewMongoPersistence creates or returns a MongoPersistence instance with a connection pool
+func NewMongoPersistence(uri, dbName string) (*entities.Persistence, error) {
+	log.Printf("MongoPersistence: NewMongoPersistence: Creating a new MongoPersistence instance with URI: %s and DB: %s\n", uri, dbName)
 	onceMongodb.Do(func() {
-		// Configura el cliente MongoDB con un pool de conexiones (máximo 10 conexiones).
+		// Set up the MongoDB client with a connection pool (maximum 20 connections).
 		client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(uri).SetMaxPoolSize(20))
 		if err != nil {
-			utils.LogCriticalError(fmt.Sprintf("MongoPersistencia:  NuevaMongoPersistencia: Error de conexión con MongoDB: %v\n", err))
-			log.Printf("MongoPersistencia:  NuevaMongoPersistencia: Error de conexión con MongoDB: %v\n", err)
+			utils.LogCriticalError(fmt.Sprintf("MongoPersistence: NewMongoPersistence: MongoDB connection error: %v\n", err))
+			log.Printf("MongoPersistence: NewMongoPersistence: MongoDB connection error: %v\n", err)
 			return
 		}
-		// Verifica la conexión
+		// Verify the connection
 		err = client.Ping(context.Background(), nil)
 		if err != nil {
-			log.Printf("MongoPersistencia:  NuevaMongoPersistencia: Error al hacer ping a MongoDB: %v\n", err)
+			log.Printf("MongoPersistence: NewMongoPersistence: Error pinging MongoDB: %v\n", err)
 			return
 		}
 		db := client.Database(dbName)
-		mongoInstance = &MongoPersistencia{client: client, db: db}
+		mongoInstance = &MongoPersistence{client: client, db: db}
 	})
 
 	if mongoInstance == nil {
-		return nil, fmt.Errorf("MongoPersistencia:  NuevaMongoPersistencia: no se pudo crear la instancia de MongoPersistencia")
+		return nil, fmt.Errorf("MongoPersistence: NewMongoPersistence: unable to create MongoPersistence instance")
 	}
 
-	var persistenciaPersist entities.Persistencia = mongoInstance
-	log.Println("MongoPersistencia:  NuevaMongoPersistencia: Instancia de MongoPersistencia creada correctamente")
-	return &persistenciaPersist, nil
+	var persistence entities.Persistence = mongoInstance
+	log.Println("MongoPersistence: NewMongoPersistence: MongoPersistence instance successfully created")
+	return &persistence, nil
 }
 
-// ObtenerInstanciaDB obtiene la instancia de la base de datos
-func ObtenerInstanciaDB() (*entities.Persistencia, error) {
-	log.Println("MongoPersistencia:  ObtenerInstanciaDB: ObtenerInstanciaDB: Obteniendo instancia de base de datos MongoDB...")
+// GetDBInstance retrieves the database instance
+func GetDBInstance() (*entities.Persistence, error) {
+	log.Println("MongoPersistence: GetDBInstance: Retrieving MongoDB database instance...")
 	if mongoInstance == nil {
-		// Regresamos un error si la instancia no ha sido inicializada
-		return nil, errors.New("MongoPersistencia:  ObtenerInstanciaDB: ObtenerInstanciaDB: la instancia de MongoPersistencia no ha sido inicializada")
+		// Return an error if the instance hasn't been initialized
+		return nil, errors.New("MongoPersistence: GetDBInstance: MongoPersistence instance has not been initialized")
 	}
 
-	// Devolvemos mongoInstance como un tipo Persistencia, que implementa la interfaz Persistencia
-	var persistenciaPersist entities.Persistencia = mongoInstance
-	return &persistenciaPersist, nil
+	// Return mongoInstance as a Persistence type, which implements the Persistence interface
+	var persistence entities.Persistence = mongoInstance
+	return &persistence, nil
 }
-func (mp *MongoPersistencia) handleNoDocumentsError(err error, idSala uuid.UUID) error {
+
+func (mp *MongoPersistence) handleNoDocumentsError(err error, roomId uuid.UUID) error {
 	if err == mongo.ErrNoDocuments {
-		// Si no encontramos documentos, verificamos si la sala existe
-		log.Printf("MongoPersistencia:  handleNoDocumentsError: No se encontraron mensajes para la sala: %v", idSala)
-		// Retornar el resultado de VerificarSalaExistente
-		existe, err := mp.VerificarSalaExistente(idSala)
+		// If no documents are found, check if the room exists
+		log.Printf("MongoPersistence: handleNoDocumentsError: No messages found for room: %v", roomId)
+		// Return the result of CheckRoomExists
+		exists, err := mp.CheckRoomExists(roomId)
 		if err != nil {
-			log.Printf("MongoPersistencia: Error al verificar si la sala existe: %v\n", err)
-			return err // Retornar el error si ocurre uno en VerificarSalaExistente
+			log.Printf("MongoPersistence: Error verifying if the room exists: %v\n", err)
+			return err // Return the error if one occurs in CheckRoomExists
 		}
-		if !existe {
-			log.Printf("MongoPersistencia: La sala con id [%v] no existe.\n", idSala)
-			return fmt.Errorf("MongoPersistencia:  handleNoDocumentsError: la sala con id %v no existe", idSala)
+		if !exists {
+			log.Printf("MongoPersistence: The room with id [%v] does not exist.\n", roomId)
+			return fmt.Errorf("MongoPersistence: handleNoDocumentsError: the room with id %v does not exist", roomId)
 		} else {
 			return nil
 		}
 	}
-	log.Printf("MongoPersistencia: Error al obtener el mensaje base en la BD: %v\n", err)
-	return fmt.Errorf("error al obtener el mensaje base: %v", err) // Si el error no es mongo.ErrNoDocuments, devolver el error original
+	log.Printf("MongoPersistence: Error retrieving the base message from the DB: %v\n", err)
+	return fmt.Errorf("error retrieving the base message: %v", err) // If the error is not mongo.ErrNoDocuments, return the original error
 }
-func (mp *MongoPersistencia) ObtenerMensajesAnteriores(idMensaje uuid.UUID, cantidadRestante int) ([]entities.Message, error) {
-	collection := mp.db.Collection("mensajes")
 
-	// Buscar el mensaje con el id dado para obtener su índice
-	var mensaje entities.Message
-	filtro := bson.M{"idMensaje": idMensaje}
-	err := collection.FindOne(context.TODO(), filtro).Decode(&mensaje)
+func (mp *MongoPersistence) GetPreviousMessages(messageId uuid.UUID, remainingCount int) ([]entities.Message, error) {
+	collection := mp.db.Collection("messages")
+
+	// Find the message with the given id to get its index
+	var message entities.Message
+	filter := bson.M{"messageId": messageId}
+	err := collection.FindOne(context.TODO(), filter).Decode(&message)
 	if err != nil {
-		log.Printf("MongoPersistencia : ObtenerMensajesAnteriores: No se pudo encontrar el mensaje con id %s: %v", idMensaje, err)
+		log.Printf("MongoPersistence : GetPreviousMessages: Unable to find the message with id %s: %v", messageId, err)
 		return nil, nil
 	}
 
-	// Obtener los mensajes anteriores al índice del mensaje encontrado
-	indiceObjetivo := mensaje.MessageId // Asumo que hay un campo "Indice" en tu estructura que representa la posición
-	filtroMensajesAnteriores := bson.M{
-		"indice":    bson.M{"$lt": indiceObjetivo}, // Índices menores al índice del mensaje objetivo
-		"idMensaje": bson.M{"$ne": idMensaje},      // Excluir el mensaje con el id dado
+	// Get messages prior to the index of the found message
+	targetIndex := message.MessageId // Assuming there's a "Index" field in your structure representing the position
+	previousMessagesFilter := bson.M{
+		"index":     bson.M{"$lt": targetIndex}, // Indices less than the target message index
+		"messageId": bson.M{"$ne": messageId},   // Exclude the message with the given id
 	}
-	opciones := options.Find().
-		SetSort(bson.M{"indice": -1}).    // Ordenar por índice descendente
-		SetLimit(int64(cantidadRestante)) // Limitar la cantidad de resultados
+	options := options.Find().
+		SetSort(bson.M{"index": -1}).   // Sort by index in descending order
+		SetLimit(int64(remainingCount)) // Limit the number of results
 
-	// Buscar los mensajes anteriores
-	cursor, err := collection.Find(context.TODO(), filtroMensajesAnteriores, opciones)
+	// Find the previous messages
+	cursor, err := collection.Find(context.TODO(), previousMessagesFilter, options)
 	if err != nil {
-		return nil, fmt.Errorf("Error al buscar mensajes anteriores en MongoDB: %v", err)
+		return nil, fmt.Errorf("Error searching for previous messages in MongoDB: %v", err)
 	}
 	defer cursor.Close(context.TODO())
 
-	// Decodificar los mensajes encontrados
-	var mensajes []entities.Message
+	// Decode the found messages
+	var messages []entities.Message
 	for cursor.Next(context.TODO()) {
-		var mensajeAnterior entities.Message
-		if err := cursor.Decode(&mensajeAnterior); err != nil {
-			return nil, fmt.Errorf("Error al decodificar un mensaje: %v", err)
+		var previousMessage entities.Message
+		if err := cursor.Decode(&previousMessage); err != nil {
+			return nil, fmt.Errorf("Error decoding a message: %v", err)
 		}
-		mensajes = append(mensajes, mensajeAnterior)
+		messages = append(messages, previousMessage)
 	}
 
-	// Verificar errores del cursor
+	// Check cursor errors
 	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("Error en el cursor de MongoDB: %v", err)
+		return nil, fmt.Errorf("Error in MongoDB cursor: %v", err)
 	}
 
-	return mensajes, nil
+	return messages, nil
 }
 
-// Crea una sala con el idSala que se le pasa
-func (mp *MongoPersistencia) CrearSala(sala entities.Room) error {
-	salasCollection := mp.db.Collection("salas")
-	_, err := salasCollection.UpdateOne(
+// Creates a room with the given roomId
+func (mp *MongoPersistence) CreateRoom(room entities.Room) error {
+	roomsCollection := mp.db.Collection("rooms")
+	_, err := roomsCollection.UpdateOne(
 		context.TODO(),
-		bson.M{"id": sala.RoomId},
+		bson.M{"id": room.RoomId},
 		bson.D{
-			{Key: "$set", Value: sala}, // Esto usa claves etiquetadas
+			{Key: "$set", Value: room}, // This uses labeled keys
 		},
 		options.Update().SetUpsert(true),
 	)
 	return err
 }
 
-// Implementa GuardarSala
-func (m *MongoPersistencia) GuardarSala(sala entities.Room) error {
-	log.Printf("MongoPersistencia:  GuardarSala: Guardando sala: %+v\n", sala)
-	collection := m.db.Collection("salas")
-	_, err := collection.InsertOne(context.TODO(), sala)
+// Implements SaveRoom
+func (m *MongoPersistence) SaveRoom(room entities.Room) error {
+	log.Printf("MongoPersistence: SaveRoom: Saving room: %+v\n", room)
+	collection := m.db.Collection("rooms")
+	_, err := collection.InsertOne(context.TODO(), room)
 	if err != nil {
-		log.Printf("MongoPersistencia:  GuardarSala: Error al guardar la sala: %v\n", err)
+		log.Printf("MongoPersistence: SaveRoom: Error saving the room: %v\n", err)
 	}
 	return err
 }
 
-// Implementa ObtenerSala
-func (m *MongoPersistencia) ObtenerSala(id uuid.UUID) (entities.Room, error) {
-	log.Printf("MongoPersistencia:  ObtenerSala: Obteniendo sala con ID: %s\n", id)
-	var sala entities.Room
-	collection := m.db.Collection("salas")
-	err := collection.FindOne(context.TODO(), bson.M{"id": id}).Decode(&sala)
+// Implements GetRoom
+func (m *MongoPersistence) GetRoom(id uuid.UUID) (entities.Room, error) {
+	log.Printf("MongoPersistence: GetRoom: Getting room with ID: %s\n", id)
+	var room entities.Room
+	collection := m.db.Collection("rooms")
+	err := collection.FindOne(context.TODO(), bson.M{"id": id}).Decode(&room)
 	if err != nil {
-		log.Printf("MongoPersistencia:  ObtenerSala: Error al obtener la sala: %v\n", err)
+		log.Printf("MongoPersistence: GetRoom: Error getting the room: %v\n", err)
 		return entities.Room{}, err
 	}
-	log.Printf("MongoPersistencia:  ObtenerSala: Sala obtenida: %+v\n", sala)
-	return sala, nil
+	log.Printf("MongoPersistence: GetRoom: Room retrieved: %+v\n", room)
+	return room, nil
 }
 
-// GuardarMensaje guarda un solo mensaje en la base de datos MongoDB
-func (mp *MongoPersistencia) GuardarMensaje(mensaje *entities.Message) error {
-	log.Printf("MongoPersistencia:  GuardarMensaje: Guardando mensaje: %+v\n", mensaje)
-	collection := mp.db.Collection("mensajes")
-	_, err := collection.InsertOne(context.TODO(), mensaje)
+// SaveMessage saves a single message in the MongoDB database
+func (mp *MongoPersistence) SaveMessage(message *entities.Message) error {
+	log.Printf("MongoPersistence: SaveMessage: Saving message: %+v\n", message)
+	collection := mp.db.Collection("messages")
+	_, err := collection.InsertOne(context.TODO(), message)
 	if err != nil {
-		log.Printf("MongoPersistencia:  GuardarMensaje: Error al guardar el mensaje en MongoDB: %v\n", err)
-		return fmt.Errorf("MongoPersistencia:  GuardarMensaje: error al guardar el mensaje en MongoDB: %v", err)
+		log.Printf("MongoPersistence: SaveMessage: Error saving the message in MongoDB: %v\n", err)
+		return fmt.Errorf("MongoPersistence: SaveMessage: error saving the message in MongoDB: %v", err)
 	}
-	log.Println("MongoPersistencia:  GuardarMensaje: Mensaje guardado correctamente")
+	log.Println("MongoPersistence: SaveMessage: Message saved successfully")
 	return nil
 }
 
-// GuardarMensajesEnBaseDeDatos guarda una lista de mensajes en MongoDB
-func (mp *MongoPersistencia) GuardarMensajesEnBaseDeDatos(mensajes []entities.Message, roomId uuid.UUID) error {
-	log.Printf("MongoPersistencia:  GuardarMensajesEnBaseDeDatos: Guardando lista de %d mensajes\n", len(mensajes))
-	collection := mp.db.Collection("mensajes")
+// SaveMessagesToDatabase saves a list of messages in MongoDB
+func (mp *MongoPersistence) SaveMessagesToDatabase(messages []entities.Message, roomId uuid.UUID) error {
+	log.Printf("MongoPersistence: SaveMessagesToDatabase: Saving list of %d messages\n", len(messages))
+	collection := mp.db.Collection("messages")
 
-	// Convertimos los mensajes a una lista de interfaces{}
-	var documentos []interface{}
-	for _, mensaje := range mensajes {
-		documentos = append(documentos, bson.D{
-			{Key: "nick_usuario", Value: mensaje.Nickname},
-			{Key: "fecha_envio", Value: mensaje.SendDate},
-			{Key: "id_sala", Value: roomId},
-			{Key: "nombre_sala", Value: mensaje.RoomName},
+	// Convert messages to a list of interfaces{}
+	var documents []interface{}
+	for _, message := range messages {
+		documents = append(documents, bson.D{
+			{Key: "user_nickname", Value: message.Nickname},
+			{Key: "send_date", Value: message.SendDate},
+			{Key: "room_id", Value: roomId},
+			{Key: "room_name", Value: message.RoomName},
 		})
 	}
 
-	// Insertamos todos los documentos en la colección
-	_, err := collection.InsertMany(context.TODO(), documentos)
+	// Insert all documents into the collection
+	_, err := collection.InsertMany(context.TODO(), documents)
 	if err != nil {
-		log.Printf("MongoPersistencia:  GuardarMensajesEnBaseDeDatos: Error al guardar los mensajes en MongoDB: %v\n", err)
-		return fmt.Errorf("MongoPersistencia:  GuardarMensajesEnBaseDeDatos: error al guardar los mensajes en MongoDB: %v", err)
+		log.Printf("MongoPersistence: SaveMessagesToDatabase: Error saving the messages in MongoDB: %v\n", err)
+		return fmt.Errorf("MongoPersistence: SaveMessagesToDatabase: error saving the messages in MongoDB: %v", err)
 	}
 
-	// Todo salió bien
-	log.Println("MongoPersistencia:  GuardarMensajesEnBaseDeDatos: Mensajes guardados correctamente")
+	// Everything went well
+	log.Println("MongoPersistence: SaveMessagesToDatabase: Messages saved successfully")
 	return nil
 }
 
-func (mp *MongoPersistencia) ObtenerMensajesDesdeSala(idSala uuid.UUID) ([]entities.Message, error) {
-	log.Printf("MongoPersistencia: ObtenerMensajesDesdeSala: Buscando mensajes para la sala [%s]", idSala)
+func (mp *MongoPersistence) GetMessagesFromRoom(roomId uuid.UUID) ([]entities.Message, error) {
+	log.Printf("MongoPersistence: GetMessagesFromRoom: Searching messages for room [%s]", roomId)
 
-	collection := mp.db.Collection("mensajes")
+	collection := mp.db.Collection("messages")
 
-	// Filtro para buscar todos los mensajes de la sala con id_sala
-	filter := bson.D{{Key: "id_sala", Value: idSala}}
+	// Filter to search for all messages from the room with room_id
+	filter := bson.D{{Key: "room_id", Value: roomId}}
 
-	// Buscar todos los mensajes con ese id_sala
+	// Find all messages with that room_id
 	cursor, err := collection.Find(context.TODO(), filter)
 	if err != nil {
-		log.Printf("MongoPersistencia: ObtenerMensajesDesdeSala: Error al buscar los mensajes en MongoDB: %v\n", err)
-		return nil, fmt.Errorf("Error al buscar mensajes en MongoDB: %v", err)
+		log.Printf("MongoPersistence: GetMessagesFromRoom: Error searching for messages in MongoDB: %v\n", err)
+		return nil, fmt.Errorf("Error searching for messages in MongoDB: %v", err)
 	}
 	defer cursor.Close(context.TODO())
 
-	// Iterar sobre los documentos devueltos y mapearlos a una lista de entidades Message
-	var mensajes []entities.Message
+	// Iterate over the returned documents and map them to a list of Message entities
+	var messages []entities.Message
 	for cursor.Next(context.TODO()) {
-		var mensaje entities.Message
-		if err := cursor.Decode(&mensaje); err != nil {
-			log.Printf("MongoPersistencia: ObtenerMensajesDesdeSala: Error al decodificar el mensaje: %v", err)
+		var message entities.Message
+		if err := cursor.Decode(&message); err != nil {
+			log.Printf("MongoPersistence: GetMessagesFromRoom: Error decoding message: %v", err)
 			continue
 		}
-		mensajes = append(mensajes, mensaje)
+		messages = append(messages, message)
 	}
 
-	// Verificamos si hubo errores en el cursor
+	// Check for errors in the cursor
 	if err := cursor.Err(); err != nil {
-		log.Printf("MongoPersistencia: ObtenerMensajesDesdeSala: Error durante la iteración del cursor: %v", err)
+		log.Printf("MongoPersistence: GetMessagesFromRoom: Error during cursor iteration: %v", err)
 		return nil, err
 	}
 
-	// Devolver la lista de mensajes
-	log.Printf("MongoPersistencia: ObtenerMensajesDesdeSala: Se encontraron %d mensajes para la sala [%s]", len(mensajes), idSala)
-	return mensajes, nil
+	// Return the list of messages
+	log.Printf("MongoPersistence: GetMessagesFromRoom: Found %d messages for room [%s]", len(messages), roomId)
+	return messages, nil
 }
+func (mp *MongoPersistence) CheckRoomExists(idRoom uuid.UUID) (bool, error) {
+	log.Printf("MongoPersistence: CheckRoomExists: Checking if the room exists with ID: %s\n", idRoom)
 
-func (mp *MongoPersistencia) VerificarSalaExistente(idSala uuid.UUID) (bool, error) {
-	log.Printf("MongoPersistencia: VerificarSalaExistente: Verificando si la sala existe con ID: %s\n", idSala)
-
-	// Acceso a la colección de salas
-	collection := mp.db.Collection("salas")
-	filter := bson.M{"_id": idSala}
+	// Access the rooms collection
+	collection := mp.db.Collection("rooms")
+	filter := bson.M{"_id": idRoom}
 
 	var result bson.M
 	err := collection.FindOne(context.TODO(), filter).Decode(&result)
 
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			log.Printf("MongoPersistencia: VerificarSalaExistente: La sala con ID %s no existe.\n", idSala)
-			return false, nil // La sala no existe
+			log.Printf("MongoPersistence: CheckRoomExists: The room with ID %s does not exist.\n", idRoom)
+			return false, nil // The room doesn't exist
 		}
-		log.Printf("MongoPersistencia: VerificarSalaExistente: Error al buscar la sala: %v\n", err)
-		return false, err // Otro error
+		log.Printf("MongoPersistence: CheckRoomExists: Error while searching for the room: %v\n", err)
+		return false, err // Other error
 	}
 
-	log.Printf("MongoPersistencia: VerificarSalaExistente: La sala con ID %s existe.\n", idSala)
-	return true, nil // La sala existe
+	log.Printf("MongoPersistence: CheckRoomExists: The room with ID %s exists.\n", idRoom)
+	return true, nil // The room exists
 }
-func (mp *MongoPersistencia) ObtenerMensajesDesdeSalaPorId(idSala uuid.UUID, idMensaje uuid.UUID) ([]entities.Message, error) {
-	log.Printf("MongoPersistencia:  ObtenerMensajesDesdeId: Obteniendo mensajes desde la sala con ID: %s y mensaje con ID: %s\n", idSala, idMensaje)
-	collection := mp.db.Collection("mensajes")
 
-	// Buscar el mensaje base
-	var mensajeBase entities.Message
-	filterBase := bson.D{{Key: "id_mensaje", Value: idMensaje}, {Key: "id_sala", Value: idSala}}
-	err := collection.FindOne(context.TODO(), filterBase).Decode(&mensajeBase)
+func (mp *MongoPersistence) GetMessagesFromRoomById(idRoom uuid.UUID, idMessage uuid.UUID) ([]entities.Message, error) {
+	log.Printf("MongoPersistence: GetMessagesFromId: Getting messages from the room with ID: %s and message with ID: %s\n", idRoom, idMessage)
+	collection := mp.db.Collection("messages")
+
+	// Search for the base message
+	var baseMessage entities.Message
+	filterBase := bson.D{{Key: "id_message", Value: idMessage}, {Key: "id_room", Value: idRoom}}
+	err := collection.FindOne(context.TODO(), filterBase).Decode(&baseMessage)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			log.Printf("MongoPersistencia: ObtenerMensajesDesdeSalaPorId: No se encontró el mensaje con id_mensaje: %v en la sala: %v\n", idMensaje, idSala)
+			log.Printf("MongoPersistence: GetMessagesFromRoomById: No message found with id_message: %v in room: %v\n", idMessage, idRoom)
 
-			// Verificar si la sala existe
-			existeSala, err := mp.VerificarSalaExistente(idSala)
+			// Verify if the room exists
+			roomExists, err := mp.CheckRoomExists(idRoom)
 			if err != nil {
-				log.Printf("MongoPersistencia: ObtenerMensajesDesdeSalaPorId: Error al verificar si la sala existe: %v\n", err)
-				return nil, fmt.Errorf("error al verificar si la sala existe: %v", err)
+				log.Printf("MongoPersistence: GetMessagesFromRoomById: Error verifying if the room exists: %v\n", err)
+				return nil, fmt.Errorf("error verifying if the room exists: %v", err)
 			}
 
-			if !existeSala {
-				log.Printf("MongoPersistencia: ObtenerMensajesDesdeSalaPorId: La sala con id [%v] no existe. Creando nueva sala...\n", idSala)
+			if !roomExists {
+				log.Printf("MongoPersistence: GetMessagesFromRoomById: The room with id [%v] does not exist. Creating a new room...\n", idRoom)
 
-				// Crear la nueva sala en la BD
-				nuevaSala := entities.Room{RoomId: idSala}
-				err := mp.CrearSala(nuevaSala) // Método para crear la sala en la colección de salas
+				// Create the new room in the database
+				newRoom := entities.Room{RoomId: idRoom}
+				err := mp.CreateRoom(newRoom) // Method to create the room in the rooms collection
 				if err != nil {
-					log.Printf("MongoPersistencia: ObtenerMensajesDesdeSalaPorId: Error al crear la nueva sala: %v\n", err)
-					return nil, fmt.Errorf("error al crear la nueva sala: %v", err)
+					log.Printf("MongoPersistence: GetMessagesFromRoomById: Error creating the new room: %v\n", err)
+					return nil, fmt.Errorf("error creating the new room: %v", err)
 				}
 
-				log.Printf("MongoPersistencia: ObtenerMensajesDesdeSalaPorId: Se ha creado una nueva sala con id [%v] sin mensajes.\n", idSala)
+				log.Printf("MongoPersistence: GetMessagesFromRoomById: A new room with id [%v] has been created with no messages.\n", idRoom)
 
-				// Devolver nil ya que no hay mensajes
+				// Return nil since there are no messages
 				return nil, nil
 			}
 
-			// Si la sala existe pero no tiene mensajes
-			log.Printf("MongoPersistencia: La sala con id [%v] existe pero no tiene mensajes.\n", idSala)
+			// If the room exists but has no messages
+			log.Printf("MongoPersistence: The room with id [%v] exists but has no messages.\n", idRoom)
 			return nil, nil
 		}
 
-		// Error al intentar obtener el mensaje base
-		log.Printf("MongoPersistencia: Error al obtener el mensaje base en la BD: %v\n", err)
-		return nil, fmt.Errorf("error al obtener el mensaje base: %v", err)
+		// Error attempting to fetch the base message
+		log.Printf("MongoPersistence: Error fetching the base message from the DB: %v\n", err)
+		return nil, fmt.Errorf("error fetching the base message: %v", err)
 	}
-	// Filtro para obtener mensajes posteriores al idMensaje
+	// Filter to get messages after the base message idMessage
 	filter := bson.D{
-		{Key: "id_sala", Value: idSala},
-		{Key: "fecha_envio", Value: bson.D{{Key: "$gte", Value: mensajeBase.SendDate}}}, // Asegurarse de que los mensajes sean posteriores a fecha_envio del idMensaje
+		{Key: "id_room", Value: idRoom},
+		{Key: "send_date", Value: bson.D{{Key: "$gte", Value: baseMessage.SendDate}}}, // Ensure messages are after baseMessage's send_date
 	}
 
-	// Configuración para ordenar los mensajes por fecha de envío, con el más antiguo primero.
-	findOptions := options.Find().SetSort(bson.D{{Key: "fecha_envio", Value: 1}}) // Ascendente, el más antiguo primero.
+	// Set up options to sort messages by send date, with the oldest first
+	findOptions := options.Find().SetSort(bson.D{{Key: "send_date", Value: 1}}) // Ascending, oldest first.
 
 	cursor, err := collection.Find(context.TODO(), filter, findOptions)
 	if err != nil {
-		log.Printf("MongoPersistencia:  ObtenerMensajesDesdeId: Error al ejecutar la consulta: %v\n", err)
-		return nil, fmt.Errorf("error al ejecutar la consulta: %v", err)
+		log.Printf("MongoPersistence: GetMessagesFromId: Error executing the query: %v\n", err)
+		return nil, fmt.Errorf("error executing the query: %v", err)
 	}
 	defer cursor.Close(context.TODO())
 
-	var mensajes []entities.Message
-	// Iterar sobre los mensajes obtenidos en el cursor
+	var messages []entities.Message
+	// Iterate through the messages obtained from the cursor
 	for cursor.Next(context.TODO()) {
-		var mensaje entities.Message
-		// Decodificar cada mensaje en la estructura adecuada
-		if err := cursor.Decode(&mensaje); err != nil {
-			log.Printf("MongoPersistencia:  ObtenerMensajesDesdeId: Error al decodificar el mensaje: %v\n", err)
-			return nil, fmt.Errorf("error al decodificar el mensaje: %v", err)
+		var message entities.Message
+		// Decode each message into the appropriate structure
+		if err := cursor.Decode(&message); err != nil {
+			log.Printf("MongoPersistence: GetMessagesFromId: Error decoding the message: %v\n", err)
+			return nil, fmt.Errorf("error decoding the message: %v", err)
 		}
-		// Agregar el mensaje a la lista de mensajes
-		mensajes = append(mensajes, mensaje)
+		// Add the message to the list of messages
+		messages = append(messages, message)
 	}
 
 	if err := cursor.Err(); err != nil {
-		log.Printf("MongoPersistencia:  ObtenerMensajesDesdeId: Error al iterar sobre el cursor: %v\n", err)
-		return nil, fmt.Errorf("error al iterar sobre el cursor: %v", err)
+		log.Printf("MongoPersistence: GetMessagesFromId: Error iterating over the cursor: %v\n", err)
+		return nil, fmt.Errorf("error iterating over the cursor: %v", err)
 	}
 
-	// Loguear la cantidad de mensajes obtenidos
-	log.Printf("MongoPersistencia:  ObtenerMensajesDesdeId: Mensajes obtenidos después del ID de mensaje: %d\n", len(mensajes))
+	// Log the number of messages obtained
+	log.Printf("MongoPersistence: GetMessagesFromId: Messages obtained after the message ID: %d\n", len(messages))
 
-	// Retornar la lista de mensajes obtenidos
-	return mensajes, nil
+	// Return the list of obtained messages
+	return messages, nil
 }
-func (mp *MongoPersistencia) GuardarUsuario(usuario *entities.User) error {
-	log.Printf("MongoPersistencia:  GuardarUsuario: Iniciando el guardado del usuario con ID: %s\n", usuario.UserId)
 
-	// Crear un documento BSON a partir del usuario
-	documento := bson.D{
-		{Key: "id_usuario", Value: usuario.UserId},
-		{Key: "nickname", Value: usuario.Nickname},
-		{Key: "token", Value: usuario.Token},
-		{Key: "hora_ultima_accion", Value: usuario.LastActionTime},
-		{Key: "estado", Value: usuario.State},
-		{Key: "tipo", Value: usuario.Type},
-		{Key: "idsala", Value: usuario.RoomId},     // La sala puede ser nil
-		{Key: "namesala", Value: usuario.RoomName}, // La sala puede ser nil
+func (mp *MongoPersistence) SaveUser(user *entities.User) error {
+	log.Printf("MongoPersistence: SaveUser: Starting to save the user with ID: %s\n", user.UserId)
+
+	// Create a BSON document from the user
+	document := bson.D{
+		{Key: "user_id", Value: user.UserId},
+		{Key: "nickname", Value: user.Nickname},
+		{Key: "token", Value: user.Token},
+		{Key: "last_action_time", Value: user.LastActionTime},
+		{Key: "state", Value: user.State},
+		{Key: "type", Value: user.Type},
+		{Key: "room_id", Value: user.RoomId},     // The room can be nil
+		{Key: "room_name", Value: user.RoomName}, // The room can be nil
 	}
-	log.Printf("MongoPersistencia:  GuardarUsuario: Documento BSON para guardar usuario: %+v\n", documento)
+	log.Printf("MongoPersistence: SaveUser: BSON document for saving user: %+v\n", document)
 
-	// Insertar el documento en la colección
-	collection := mp.db.Collection("usuarios")
-	log.Printf("MongoPersistencia:  GuardarUsuario: Colección recogida de usuarios: %+v\n", documento)
-	_, err := collection.InsertOne(context.Background(), documento)
+	// Insert the document into the collection
+	collection := mp.db.Collection("users")
+	log.Printf("MongoPersistence: SaveUser: Users collection fetched: %+v\n", document)
+	_, err := collection.InsertOne(context.Background(), document)
 	if err != nil {
-		log.Printf("MongoPersistencia:  GuardarUsuario: Error al guardar el usuario en MongoDB: %v\n", err)
-		return fmt.Errorf("MongoPersistencia:  GuardarUsuario: error al guardar el usuario en MongoDB: %v", err)
+		log.Printf("MongoPersistence: SaveUser: Error saving the user in MongoDB: %v\n", err)
+		return fmt.Errorf("MongoPersistencia: SaveUser: error saving the user in MongoDB: %v", err)
 	}
 
-	// Confirmación de éxito
-	log.Printf("MongoPersistencia:  GuardarUsuario: Usuario con ID: %s guardado correctamente en MongoDB\n", usuario.UserId)
+	// Success confirmation
+	log.Printf("MongoPersistence: SaveUser: User with ID: %s saved successfully in MongoDB\n", user.UserId)
 	return nil
 }

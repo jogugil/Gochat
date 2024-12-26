@@ -8,65 +8,65 @@ import (
 	"time"
 )
 
-// Registrar el error en el archivo de log
+// Log the error to the log file
 func LogCriticalError(errorMessage string) {
-	// Obtener la ruta del archivo de log desde la variable de entorno
-	logFilePath, err := ObtenerVariableDeEntorno("LogFile")
+	// Get the log file path from the environment variable
+	logFilePath, err := GetEnvVariable("LogFile")
 	if err != nil {
-		log.Fatal("No se pudo obtener la variable de entorno para el archivo de log: ", err)
+		log.Fatal("Failed to retrieve the environment variable for the log file: ", err)
 	}
 
-	// Abrir el archivo de log en modo "append" (añadir) sin borrar el contenido existente
+	// Open the log file in "append" mode without deleting the existing content
 	file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatal("Error al abrir el archivo de log: ", err)
+		log.Fatal("Error opening the log file: ", err)
 	}
 	defer file.Close()
 
-	// Escribir el error en el archivo de log con una marca de tiempo
+	// Write the error to the log file with a timestamp
 	timestamp := time.Now().Format(time.RFC3339)
 	logMessage := fmt.Sprintf("[%s] ERROR: %s\n", timestamp, errorMessage)
 	_, err = file.WriteString(logMessage)
 	if err != nil {
-		log.Fatal("Error al escribir en el archivo de log: ", err)
+		log.Fatal("Error writing to the log file: ", err)
 	}
 
-	// Enviar un correo al administrador en caso de error crítico
-	EnviarCorreoAdministrador(errorMessage)
+	// Send an email to the administrator for critical errors
+	SendAdminEmail(errorMessage)
 }
 
-// Enviar un correo electrónico al administrador
-func EnviarCorreoAdministrador(errorMessage string) {
-	// Obtener la dirección de correo del administrador desde la variable de entorno
-	adminEmail, err := ObtenerVariableDeEntorno("EmailAdmin")
+// Send an email to the administrator
+func SendAdminEmail(errorMessage string) {
+	// Get the administrator's email address from the environment variable
+	adminEmail, err := GetEnvVariable("EmailAdmin")
 	if err != nil {
-		log.Fatal("No se pudo obtener el correo del administrador: ", err)
+		log.Fatal("Failed to retrieve the administrator's email: ", err)
 	}
 
-	// Configurar el servidor SMTP
-	// Obtener las credenciales de correo desde las variables de entorno o definirlas
+	// Configure the SMTP server
+	// Retrieve email credentials from environment variables
 	smtpHost := "smtp.gmail.com"
 	smtpPort := "587"
-	smtpUser := os.Getenv("GMAIL_USER")     // Email de la cuenta de Gmail
-	smtpPassword := os.Getenv("GMAIL_PASS") // Contraseña o clave de aplicación de Gmail
+	smtpUser := os.Getenv("GMAIL_USER")     // Gmail account email
+	smtpPassword := os.Getenv("GMAIL_PASS") // Gmail app password or account password
 
-	// Formato de los destinatarios
+	// Configure the recipients
 	from := smtpUser
 	to := []string{adminEmail}
 
-	// Configurar el mensaje
-	subject := "Error crítico en el servidor"
-	body := fmt.Sprintf("Se ha producido un error crítico en el servidor: %s", errorMessage)
+	// Create the email message
+	subject := "Critical Server Error"
+	body := fmt.Sprintf("A critical error occurred on the server: %s", errorMessage)
 	msg := []byte("To: " + adminEmail + "\r\n" +
 		"Subject: " + subject + "\r\n" +
 		"\r\n" +
 		body + "\r\n")
 
-	// Conectar con el servidor SMTP
+	// Connect to the SMTP server
 	auth := smtp.PlainAuth("", smtpUser, smtpPassword, smtpHost)
 	err = smtp.SendMail(smtpHost+":"+smtpPort, auth, from, to, msg)
 	if err != nil {
-		log.Fatal("Error al enviar el correo al administrador: ", err)
+		log.Fatal("Error sending the email to the administrator: ", err)
 	}
-	fmt.Println("Correo enviado al administrador con el error.")
+	fmt.Println("Email sent to the administrator with the error.")
 }
