@@ -1,0 +1,65 @@
+{
+  "broker_type": "nats",
+  "gochat": {
+    "login": {
+      "url": "/login",
+      "op": "post" 
+    },
+    "logout": {
+      "url": "/logout",
+      "op": "post" 
+    },
+    "mainroom": {
+      "id": "56c4f5f3-c818-4931-98f8-300f34c35111",
+      "name": "Sala Principal",
+      "server_topic": "principal.server",
+      "client_topic": "principal.cliente"
+    }
+  },
+  "salas": [
+    {
+      "id": "56c4f5f3-c818-4931-98f8-300f34c35d7f",
+      "name": "Sala Fija 1",
+      "server_topic": "fija1.server",
+      "client_topic": "fija1.cliente"
+    },
+    {
+      "id": "56c4f5f3-c818-4931-98f8-300f34c35d7g",
+      "name": "Sala Fija 2",
+      "server_topic": "fija2.server",
+      "client_topic": "fija3.cliente"
+
+    }
+  ],
+  "kafka": {
+    "brokers": ["localhost:9094", "localhost:9094"],
+    "message": {
+      "key": "messageid",
+      "value": "messagetext",
+      "headers": {
+        "senddate": "senddate",
+        "serverdate": "serverdate",
+        "nickname": "nickname",
+        "token": "token",
+        "roomid": "roomid",
+        "roomname": "roomname"
+      }
+    }
+  },
+  "nats": {
+    "urls": ["nats://localhost:4222", "nats://localhost:4222"],
+    "message": {
+      "subject": "roomname",
+      "data": "messagetext",
+      "header": {
+        "messageid": "messageid",
+        "senddate": "senddate",
+        "serverdate": "serverdate",
+        "nickname": "nickname",
+        "token": "token",
+        "roomid": "roomid",
+        "roomname": "roomname"
+      }
+    }
+  }
+}

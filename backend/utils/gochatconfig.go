@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
+
+	"github.com/google/uuid"
 )
 
 // Configuración global
@@ -29,4 +32,24 @@ func LoadConfig(filePath string) error {
 		return err
 	}
 	return nil
+}
+func ParseUUID(value string) uuid.UUID {
+	if value == "" {
+		return uuid.New() // Generar nuevo UUID si no se proporciona
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return uuid.New() // Generar nuevo UUID si el valor es inválido
+	}
+	return parsed
+}
+func ParseInt(value string) int {
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0 // Retornar 0 si el valor no es un entero válido
+	}
+	return parsed
 }

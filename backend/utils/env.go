@@ -36,6 +36,7 @@ func ReloadEnvironmentVariables() {
 	envVars["GMAIL_USER"] = os.Getenv("GMAIL_USER")
 	envVars["GMAIL_PASS"] = os.Getenv("GMAIL_PASS")
 	envVars["GIN_MODE"] = os.Getenv("GIN_MODE")
+	envVars["GOCHAT_CONFIG_FILE"] = os.Getenv("GOCHAT_CONFIG_FILE")
 }
 
 // LoadEnvironmentVariables loads the environment variables from a .env file

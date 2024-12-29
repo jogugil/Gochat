@@ -1,8 +1,7 @@
-package api
+package services
 
 import (
 	"backend/models"
-	"backend/services"
 	"encoding/json"
 	"log"
 
@@ -51,7 +50,7 @@ func PostUsersHandler(msg []byte, urlClient string) []byte {
 		log.Printf("PostUsersHandler: Datos de solicitud decodificados: %+v\n", requestData)
 
 		// Obtener la instancia del singleton
-		secMod, err := services.GetSecModServidorChat()
+		secMod, err := GetChatServerModule()
 		if err != nil {
 			log.Printf("PostUsersHandler: Error al obtener el servidor chat. : %v", err)
 			respChan <- ResponseUser{
@@ -76,7 +75,7 @@ func PostUsersHandler(msg []byte, urlClient string) []byte {
 		}
 		log.Printf("PostUsersHandler: IdSala validado correctamente: %v", idSala)
 		log.Println("PostUsersHandler:  Validando token de sesión.")
-		_, err = models.ValidarTokenSesion(requestData.TokenSesion)
+		_, err = models.ValidateSessionToken(requestData.TokenSesion)
 		if err != nil {
 			log.Printf("PostUsersHandler: Error al validar el token: %v", err)
 			respChan <- ResponseUser{
@@ -88,7 +87,7 @@ func PostUsersHandler(msg []byte, urlClient string) []byte {
 		}
 
 		// Obtener usuarios activos
-		usuarios := secMod.GestionUsuarios.ObtenerUsuariosActivos()
+		usuarios := secMod.UserManagement.GetActiveUsers()
 		if usuarios == nil {
 			respChan <- ResponseUser{
 				Status:   "NOK",

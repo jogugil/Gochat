@@ -24,7 +24,7 @@ func CreateSessionToken(nickname string) string {
 	// Get the secret key from the environment
 	secretKey, err := utils.GetEnvVariable("SecretKey")
 	if err != nil {
-		log.Printf("Error retrieving the secret key: %v", err)
+		log.Printf("Token: CreateSessionToken: Error retrieving the secret key: %v", err)
 		return ""
 	}
 
@@ -43,7 +43,7 @@ func CreateSessionToken(nickname string) string {
 	// Sign the token
 	signedToken, err := token.SignedString([]byte(secretKey))
 	if err != nil {
-		log.Println("Error generating the token: ", err)
+		log.Println("Token:  CreateSessionToken: Error generating the token: ", err)
 		return ""
 	}
 
@@ -55,32 +55,32 @@ func ValidateSessionToken(tokenStr string) (string, error) {
 	// Get the secret key from the environment
 	secretKey, err := utils.GetEnvVariable("SecretKey")
 	if err != nil {
-		return "", fmt.Errorf("error retrieving the secret key: %v", err)
+		return "", fmt.Errorf("Token:  ValidateSessionToken: error retrieving the secret key: %v", err)
 	}
 
 	// Parse the token using the secret key
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		// Verify the token's signing method is as expected
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method in token: %v", token.Header["alg"])
+			return nil, fmt.Errorf("Token:  ValidateSessionToken: unexpected signing method in token: %v", token.Header["alg"])
 		}
 		return []byte(secretKey), nil
 	})
 
 	// If there's an error parsing the token, return the error
 	if err != nil {
-		return "", fmt.Errorf("error parsing the token: %v", err)
+		return "", fmt.Errorf("Token:  ValidateSessionToken: error parsing the token: %v", err)
 	}
 
 	// Verify the token is valid
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
 		// Check if the token has expired
 		if claims.ExpiresAt.Time.Before(time.Now()) {
-			return "", fmt.Errorf("the token has expired")
+			return "", fmt.Errorf("Token:  ValidateSessionToken: the token has expired")
 		}
 		// If everything is correct, return the nickname
 		return claims.Nickname, nil
 	}
 
-	return "", fmt.Errorf("invalid token")
+	return "", fmt.Errorf("Token:  ValidateSessionToken: invalid token")
 }

@@ -2,76 +2,98 @@ package models
 
 import (
 	"backend/entities"
+	"fmt"
 	"log"
 
 	"github.com/google/uuid"
 )
 
 // Alias of the Room type
-type LocalRoom entities.Room
+type LocalRoom struct {
+	entities.Room // Composición con un puntero
+}
 
 func (room *LocalRoom) AddUser(user entities.User) {
-	log.Printf("AddUser: Adding user %v to room %s", user, room.RoomName)
+	log.Printf("LocalRoom: AddUser: Adding user %v to room %s", user, room.Room.RoomName)
 
 	// Key operation: Add the user to the list
-	room.Users = append(room.Users, user)
+	room.Room.Users = append(room.Room.Users, user)
 
-	log.Printf("AddUser: User %v added successfully to room %s", user, room.RoomName)
+	log.Printf("LocalRoom:AddUser: User %v added successfully to room %s", user, room.Room.RoomName)
 }
 
 func (room *LocalRoom) RemoveUser(user entities.User) {
-	log.Printf("RemoveUser: Removing user %v from room %s", user, room.RoomName)
+	log.Printf("LocalRoom:RemoveUser: Removing user %v from room %s", user, room.Room.RoomName)
 
 	// Iterate through the list of users
-	for i, u := range room.Users {
+	for i, u := range room.Room.Users {
 		// If the user is found, remove them from the list
 		if u == user {
-			log.Printf("RemoveUser: User %v found at position %d", user, i)
+			log.Printf("LocalRoom:RemoveUser: User %v found at position %d", user, i)
 
 			// Key operation: Remove the user while keeping the others
-			room.Users = append(room.Users[:i], room.Users[i+1:]...)
+			room.Room.Users = append(room.Room.Users[:i], room.Room.Users[i+1:]...)
 
-			log.Printf("RemoveUser: User %v removed successfully from room %s", user, room.RoomName)
+			log.Printf("LocalRoom:RemoveUser: User %v removed successfully from room %s", user, room.Room.RoomName)
 			return
 		}
 	}
 
-	log.Printf("RemoveUser: User %v not found in room %s", user, room.RoomName)
+	log.Printf("LocalRoom: RemoveUser: User %v not found in room %s", user, room.Room.RoomName)
 }
 
 func (room *LocalRoom) SendMessage(user entities.User, message entities.Message) {
-	log.Printf("SendMessage: User %v is sending message %v to room %s", user, message, room.RoomName)
+	log.Printf("LocalRoom: SendMessage: User %v is sending message %v to room %s", user, message, room.Room.RoomName)
 
 	// Key operation: Add the message to the broker
-	room.MessageBroker.PublishMessage (entities.Message, user.RoomId.String())
+	room.Room.MessageBroker.Publish(room.ClientTopic, &message)
 
-	log.Printf("SendMessage: Message %v added successfully to room %s", message, room.RoomName)
+	log.Printf("LocalRoom: SendMessage: Message %v added successfully to room %s", message, room.Room.RoomName)
 }
 
 func (room *LocalRoom) GetRoomMessages() []entities.Message {
-	log.Printf("GetRoomMessages: Fetching messages from room %s", room.RoomName)
+	log.Printf("LocalRoom: GetRoomMessages: Fetching unread messages from room %s", room.Room.RoomName)
 
-	// Key operation: Get all messages
-	messages, err := room.MessageBroker.GetMessages(room.RoomId.String())
+	// Generar el subject (topic) de la sala.
+	subject := fmt.Sprintf("room.%s.messages", room.Room.RoomId.String())
+
+	// Obtener los mensajes no leídos
+	messages, err := room.Room.MessageBroker.GetUnreadMessages(subject)
 	if err != nil {
-		log.Printf("GetRoomMessages: Error fetching messages from room %s: %v", room.RoomName, err)
+		log.Printf("LocalRoom: GetRoomMessages: Error fetching unread messages from room %s: %v", room.Room.RoomName, err)
 		return nil
 	}
 
-	log.Printf("GetRoomMessages: Messages fetched successfully from room %s", room.RoomName)
+	log.Printf("LocalRoom: GetRoomMessages: Unread messages fetched successfully from room %s", room.Room.RoomName)
 	return messages
 }
 
 func (room *LocalRoom) GetMessagesFromId(messageId uuid.UUID) []entities.Message {
-	log.Printf("GetMessagesFromId: Fetching messages from ID %v for room %s", messageId, room.RoomName)
+	log.Printf("LocalRoom: GetMessagesFromId: Fetching messages from ID %v for room %s", messageId, room.Room.RoomName)
 
 	// Key operation: Get messages from a specific ID
-	messages, err := room.MessageBroker.GetMessagesFromId(room.RoomId.String(), messageId)
+	messages, err := room.Room.MessageBroker.GetMessagesFromId(room.Room.RoomId.String(), messageId)
 	if err != nil {
-		log.Printf("GetMessagesFromId: Error fetching messages from ID %v in room %s: %v", messageId, room.RoomName, err)
+		log.Printf("LocalRoom: GetMessagesFromId: Error fetching messages from ID %v in room %s: %v", messageId, room.Room.RoomName, err)
 		return nil
 	}
 
-	log.Printf("GetMessagesFromId: Messages fetched successfully from ID %v in room %s", messageId, room.RoomName)
+	log.Printf("LocalRoom: GetMessagesFromId: Messages fetched successfully from ID %v in room %s", messageId, room.Room.RoomName)
 	return messages
+}
+func (room *LocalRoom) GetMessagesWithLimit(messageID uuid.UUID, count int) ([]entities.Message, error) {
+	log.Printf("LocalRoom: GetMessagesWithLimit: Fetching messages starting from ID %v with a limit of %d for room %s", messageID, count, room.Room.RoomName)
+
+	// Generar el subject (topic) de la sala
+	subject := fmt.Sprintf("room.%s.messages", room.Room.RoomId.String())
+
+	// Obtener los mensajes a partir de un ID específico con un límite en la cantidad de mensajes
+	messages, err := room.Room.MessageBroker.GetMessagesWithLimit(subject, messageID, count)
+	if err != nil {
+		log.Printf("LocalRoom: GetMessagesWithLimit: Error fetching messages with limit for room %s: %v", room.Room.RoomName, err)
+		return nil, fmt.Errorf("error fetching messages with limit for room %s: %w", room.Room.RoomName, err)
+	}
+
+	log.Printf("LocalRoom: GetMessagesWithLimit: Successfully fetched %d messages starting from ID %v in room %s", len(messages), messageID, room.Room.RoomName)
+	return messages, nil
 }

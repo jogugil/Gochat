@@ -116,3 +116,33 @@ func (g *UserManagement) GetActiveUsers() []*entities.User {
 	}
 	return activeUsers
 }
+func (management *UserManagement) Logout(token string) error {
+	log.Println("Intentando logout para el usuario con token:", token)
+
+	// Buscar el usuario por token
+	user, err := management.FindUserByToken(token)
+	if err != nil {
+		log.Println("Error al encontrar usuario:", err)
+		return err
+	}
+
+	// Cambiar el estado del usuario a Inactive
+	user.State = types.Inactive
+	log.Println("Estado del usuario cambiado a Inactive:", user.Nickname)
+
+	// Guardar los cambios en la base de datos
+	mongoPersistence, err := persistence.GetDBInstance()
+	if err != nil {
+		log.Println("Error al obtener instancia de persistencia:", err)
+		return err
+	}
+
+	err = (*mongoPersistence).SaveUser(&user)
+	if err != nil {
+		log.Println("Error al guardar usuario en la base de datos:", err)
+		return err
+	}
+
+	log.Println("Logout exitoso para el usuario:", user.Nickname)
+	return nil
+}

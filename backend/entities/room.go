@@ -17,4 +17,6 @@ type Room struct {
 	CreationDate     time.Time     `json:"creationdate"`
 	DeactivationDate time.Time     `json:"deactivationdate"`
 	MessageBroker    MessageBroker `json:"messagebroker"` // Reemplazamos la cola circular por el broker
+	ServerTopic      string        `json:"servertopic"`   // Topic donde el servidor escucha (server)
+	ClientTopic      string        `json:"clienttopic"`   // Topic donde el servidor envía mensajes (client)
 }

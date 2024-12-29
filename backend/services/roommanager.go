@@ -3,23 +3,24 @@ package services
 import (
 	"backend/entities"
 	"backend/models"
-	"backend/persistence"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
 )
 
 type RoomManagement struct {
-	FixedRooms  map[uuid.UUID]*entities.Room // Map of fixed rooms in memory
-	MainRoom    *entities.Room               // Single main room
-	mu          sync.RWMutex                 // Read/write mutex
-	persistence *entities.Persistence        // Persistence to store data
-	once        sync.Once                    // To ensure single initialization
+	FixedRooms  map[uuid.UUID]*models.LocalRoom // Map of fixed rooms in memory
+	MainRoom    *models.LocalRoom               // Single main room
+	mu          sync.RWMutex                    // Read/write mutex
+	persistence *entities.Persistence           // Persistence to store data
+	once        sync.Once                       // To ensure single initialization
+	messageSubs []*nats.Subscription            // Slice de suscripciones a mensajes generales
+
 }
 
 var instance *RoomManagement // Singleton instance of RoomManagement
@@ -30,8 +31,8 @@ func NewRoomManagement(persistence *entities.Persistence, configFile string) *Ro
 	// Ensure only one instance is created
 	if instance == nil {
 		instance = &RoomManagement{
-			FixedRooms:  make(map[uuid.UUID]*entities.Room), // Initialize the map
-			persistence: persistence,                        // Assign persistence
+			FixedRooms:  make(map[uuid.UUID]*models.LocalRoom), // Initialize the map
+			persistence: persistence,                           // Assign persistence
 		}
 	}
 	// Configuration and data load only once
@@ -50,91 +51,163 @@ func NewRoomManagement(persistence *entities.Persistence, configFile string) *Ro
 
 func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 	log.Printf("RoomManagement: LoadFixedRoomsFromFile: Loading rooms from file: %s", configFile)
+
+	// Asegurarse de que FixedRooms esté inicializado
 	if rm.FixedRooms == nil {
-		rm.FixedRooms = make(map[uuid.UUID]*entities.Room)
-	}
-	var persis, err = persistence.GetDBInstance()
-
-	if err != nil {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error creating MongoPersistence instance:%v", err)
-		return err
+		rm.FixedRooms = make(map[uuid.UUID]*models.LocalRoom)
 	}
 
-	rm.MainRoom = &entities.Room{
-		RoomId:         uuid.New(),
-		RoomName:       "Main Room",
-		RoomType:       "Main",
-		MessageHistory: entities.NewCircularQueue(persis),
-	}
-
-	file, err := os.Open(configFile)
-	if err != nil {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error opening file: %v", err)
-		return err
+	// Abrir el archivo de configuración
+	file, err_op := os.Open(configFile)
+	if err_op != nil {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error opening file: %v", err_op)
+		return err_op
 	}
 	defer file.Close()
 
-	byteValue, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error reading file: %v", err)
+	// Decodificar el JSON en un mapa genérico
+	var config map[string]interface{}
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&config); err != nil {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error decoding JSON: %v", err)
 		return err
 	}
 
-	var rooms []map[string]interface{}
-	err = json.Unmarshal(byteValue, &rooms)
-	if err != nil {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing JSON: %v", err)
-		return err
+	// Usar la fábrica para obtener el MessageBroker adecuado, pasando la configuración cargada
+	msgBroker, err_c := entities.MessageBrokerFactory(config)
+	if err_c != nil {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error creating MessageBroker: %v", err_c)
+		return err_c
 	}
 
-	// Use RLock to read FixedRooms concurrently.
+	// Continuar con la carga de salas como antes...
+
+	gochat, ok := config["gochat"].(map[string]interface{})
+	if !ok {
+		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'gochat' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'gochat' no es un mapa.")
+	}
+
+	mainroom, ok := gochat["mainroom"].(map[string]interface{})
+	if !ok {
+		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'mainroom' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'mainroom' no es un mapa.")
+	}
+
+	name, ok := mainroom["name"].(string)
+	if !ok {
+		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
+	}
+	server_topic, ok := mainroom["server_topic"].(string)
+	if !ok {
+		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
+	}
+	client_topic, ok := mainroom["client_topic"].(string)
+	if !ok {
+		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
+	}
+
+	// Mostrar el valor del nombre
+	log.Println("RoomManagement: LoadFixedRoomsFromFile: Nombre de la sala:", name)
+
+	// Crear la sala con los datos obtenidos
+	rm.MainRoom = &models.LocalRoom{
+		Room: entities.Room{
+			RoomId:        uuid.New(),
+			RoomName:      name,
+			RoomType:      "Fixed",
+			MessageBroker: msgBroker, // Usar el broker creado
+			ServerTopic:   server_topic,
+			ClientTopic:   client_topic,
+		},
+	}
+	// Registrar el callback para el topic
+	topic := server_topic // Este sería el topic donde se reciben los mensajes
+	msgBroker.OnMessage(topic, HandleNewMessages)
+	//  carga la sala principal y la agregar al mapa FixedRooms
+	rm.FixedRooms[rm.MainRoom.RoomId] = rm.MainRoom
+
+	salas, ok := config["salas"].([]interface{})
+	if !ok {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: 'salas' is not an array")
+		return fmt.Errorf("'salas' is not an array")
+	}
+
+	// Usar Lock para acceder de manera segura a FixedRooms
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	for _, roomData := range rooms {
-		roomID, err_parse := uuid.Parse(roomData["id"].(string))
-		if err_parse != nil {
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v", err_parse)
-			return err_parse
-		}
-		var persis, err_per = persistence.GetDBInstance()
+	// Iterar sobre las salas y cargarlas en el mapa FixedRooms
+	for _, roomDataInterface := range salas {
+		roomData, ok := roomDataInterface.(map[string]interface{})
 
-		if err_per != nil {
-			log.Printf("RoomManagement: Error creating MongoPersistence instance:%v", err_per)
-			return err_per
+		if !ok {
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: roomData is not a map")
+			continue
 		}
-		room := &entities.Room{
-			RoomId:         roomID,
-			RoomName:       roomData["name"].(string),
-			RoomType:       "Fixed",
-			MessageHistory: entities.NewCircularQueue(persis),
+
+		// Parsear el ID de la sala
+		roomID, err := uuid.Parse(roomData["id"].(string))
+		if err != nil {
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v", err)
+			continue
 		}
+		name, ok = roomData["name"].(string)
+		if !ok {
+			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
+		}
+		server_topic, ok = roomData["server_topic"].(string)
+		if !ok {
+			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
+		}
+		client_topic, ok = roomData["client_topic"].(string)
+		if !ok {
+			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
+		}
+		// Crear la sala con los datos obtenidos
+		room := &models.LocalRoom{
+			Room: entities.Room{
+				RoomId:        roomID,
+				RoomName:      name,
+				RoomType:      "Fixed",
+				MessageBroker: msgBroker, // Usar el broker creado
+				ServerTopic:   server_topic,
+				ClientTopic:   client_topic,
+			},
+		}
+
+		// Agregar la sala al mapa de salas fijas
 		rm.FixedRooms[roomID] = room
 	}
+
 	log.Println("RoomManagement: LoadFixedRoomsFromFile: Load completed.")
 	return nil
 }
-
-func (rm *RoomManagement) CreateTemporaryRoom(name string) *entities.Room {
+func (rm *RoomManagement) CreateTemporaryRoom(name string) *models.LocalRoom {
 	log.Printf("RoomManagement: CreateTemporaryRoom: Creating temporary room with name: %s", name)
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	if rm.persistence == nil {
-		log.Fatal("RoomManagement: CreateTemporaryRoom: Persistence not initialized.")
+	room := &models.LocalRoom{
+		Room: entities.Room{
+			RoomId:        uuid.New(),
+			RoomName:      name,
+			RoomType:      "Temporary",
+			MessageBroker: rm.MainRoom.Room.MessageBroker, // Usar el broker creado
+		},
 	}
 
-	room := &entities.Room{
-		RoomId:         uuid.New(),
-		RoomName:       name,
-		RoomType:       "Temporary",
-		MessageHistory: entities.NewCircularQueue(rm.persistence),
-	}
-	log.Printf("RoomManagement: CreateTemporaryRoom: Temporary room created with ID: %s", room.RoomId)
+	log.Printf("RoomManagement: CreateTemporaryRoom: Temporary room created with ID: %s", room.Room.RoomId)
 	return room
 }
 
-func (rm *RoomManagement) GetRoomByID(roomID uuid.UUID) (*entities.Room, error) {
+func (rm *RoomManagement) GetRoomByID(roomID uuid.UUID) (*models.LocalRoom, error) {
 	log.Printf("RoomManagement: GetRoomByID: Searching for room with ID: %s", roomID)
 
 	rm.mu.RLock()
@@ -144,7 +217,7 @@ func (rm *RoomManagement) GetRoomByID(roomID uuid.UUID) (*entities.Room, error) 
 		log.Printf("RoomManagement: GetRoomByID: Lock released for reading room with ID %s", roomID)
 	}()
 
-	if rm.MainRoom != nil && rm.MainRoom.RoomId == roomID {
+	if rm.MainRoom != nil && rm.MainRoom.Room.RoomId == roomID {
 		log.Println("RoomManagement: GetRoomByID: Main room found.")
 		return rm.MainRoom, nil
 	}
@@ -168,11 +241,11 @@ func (rm *RoomManagement) SendMessage(roomID uuid.UUID, nickname, message string
 		return err
 	}
 
-	newMessage := models.CreateMessageWithDate(message, user, roomID, room.RoomName, user.LastActionTime)
+	newMessage := models.BuildMessage(user.Nickname, message, room.Room.RoomName, roomID, 1, "es")
 	log.Printf("RoomManagement: New message created: %+v\n", newMessage)
 
 	// Modify message history
-	room.MessageHistory.Enqueue(*newMessage, room.RoomId)
+	rm.MainRoom.SendMessage(user, *newMessage)
 	log.Printf("RoomManagement: SendMessage: Message sent to room with ID: %s - %v \n", roomID, newMessage)
 	return nil
 }
@@ -192,14 +265,8 @@ func (rm *RoomManagement) GetMessagesFromId(roomID uuid.UUID, messageID uuid.UUI
 		log.Printf("RoomManagement: GetMessagesFromId: Error getting room: room is nil")
 		return nil, fmt.Errorf("RoomManagement: room not found with ID: %s", roomID)
 	}
-	queue := room.MessageHistory
-	// Check if the queue is nil
-	if queue == nil {
-		log.Println("RoomManagement: GetMessagesFromId: Error: The queue is nil.")
-		return nil, fmt.Errorf("RoomManagement: GetMessagesFromId: the queue is nil in room with ID %s ", roomID)
-	}
 
-	messages, err := queue.GetMessagesFromId(roomID, messageID)
+	messages, err := rm.GetMessagesFromId(roomID, messageID)
 	if err != nil {
 		log.Printf("RoomManagement: GetMessagesFromId: Error getting messages: %v", err)
 		return nil, fmt.Errorf("RoomManagement: error in GetByLastMessageId: %v", err)
@@ -215,13 +282,7 @@ func (rm *RoomManagement) GetMessages(roomID uuid.UUID) ([]entities.Message, err
 	rm.mu.RLock() // Reading, can be done concurrently
 	defer rm.mu.RUnlock()
 
-	room, err := rm.GetRoomByID(roomID)
-	if err != nil {
-		log.Printf("RoomManagement: GetMessages: Error getting room: %v", err)
-		return nil, fmt.Errorf("the room with ID %s does not exist", roomID)
-	}
-	queue := room.MessageHistory
-	messages, err := queue.GetAll(roomID)
+	messages, err := rm.GetMessages(roomID)
 	if err != nil {
 		log.Printf("RoomManagement: GetMessages: Error getting messages: %v", err)
 		return nil, fmt.Errorf("RoomManagement: error in GetMessages: %v", err)
@@ -250,7 +311,7 @@ func (rm *RoomManagement) GetMessageCount(roomID uuid.UUID, messageID uuid.UUID,
 	}
 
 	// Get messages
-	messages, err := room.MessageHistory.GetMessagesWithLimit(messageID, count, room.RoomId)
+	messages, err := room.GetMessagesWithLimit(messageID, count)
 	if err != nil {
 		log.Printf("RoomManagement: GetMessageCount: Error getting messages with limit: %v", err)
 		return nil, fmt.Errorf("error in GetMessagesWithLimit: %v", err)

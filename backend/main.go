@@ -2,69 +2,47 @@ package main
 
 import (
 	"backend/api"
-	"backend/comm"
 	"backend/persistence"
 	"backend/services"
 	"backend/utils"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 
-	_ "net/http/pprof" // Activar pprof
-
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 )
 
-// Para manejar las conexiones WebSocket
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// Asegúrate de que esta configuración se adapte a tus necesidades de seguridad
-		return true
-	},
-}
-
-// FilteredWriter es un tipo que implementa io.Writer y filtra los logs.
 type FilteredWriter struct {
 	allowedClasses []string
 	writer         io.Writer
 }
 
-// Implementa el método Write para que se filtre según las clases permitidas.
 func (f *FilteredWriter) Write(p []byte) (n int, err error) {
 	message := string(p)
 	for _, class := range f.allowedClasses {
 		if strings.Contains(message, class) {
-			return f.writer.Write(p) // Si el mensaje contiene una clase permitida, lo escribe.
+			return f.writer.Write(p)
 		}
 	}
-	return len(p), nil // Si no es una clase permitida, lo ignora.
+	return len(p), nil // Ignore the log if it doesn't match allowed classes
 }
-
-// OJO!! TEnemos que arrancar el servidor de mongodb antes, sino no funcionará
-//  sudo docker run --name mongodb -d -p 27017:27017 mongo:latest
-
 func main() {
 	log.SetFlags(log.Lshortfile)
-	utils.CargarVariablesDeEntorno()
-	// Filtrar logs de una clase específica
-	// Creamos un FilteredWriter que filtra solo las clases permitidas.
+	utils.LoadEnvironmentVariables()
+
 	filter := &FilteredWriter{
-		allowedClasses: []string{"PostListHandler", "WebSocketHandler", "GestionSalas",
-			"NewMessageHandler", "SecModServidorChat", "CircularQueue"}, // Define las clases que deseas permitir
-		writer: io.Discard, // Inicialmente no escribimos en ningún lado
+		allowedClasses: []string{"Main", "PostListHandler", "WebSocketHandler", "RoomManagement", "NewMessageHandler",
+			"ChatServerModule", "LocalRoom", "RoomManagement"},
+		writer: io.Discard, // Initially don't log anywhere
 	}
 
-	// Redirigimos el log estándar al filtro.
-	log.SetOutput(filter)
+	log.SetOutput(filter) // Redirect log output to our custom filter
 
-	ginMode, err := utils.ObtenerVariableDeEntorno("GIN_MODE")
+	ginMode, err := utils.GetEnvVariable("GIN_MODE")
 	if err != nil {
-		ginMode = "debug" // Valor por defecto si no se configura
+		ginMode = "debug"
 	}
 
 	if ginMode == "release" {
@@ -73,109 +51,90 @@ func main() {
 		gin.SetMode(gin.DebugMode)
 	}
 
-	// Configuramos un writer que sí imprimirá en consola.
 	consoleWriter := io.Writer(os.Stdout)
-	filter.writer = consoleWriter // Redirige los logs permitidos a la consola
+	filter.writer = consoleWriter
+	// Cargar variables de entorno
+	utils.LoadEnvironmentVariables()
 
-	// Configuración de la base de datos
-	uriMongo, err := utils.ObtenerVariableDeEntorno("URIMongo")
+	// Establecer el modo de Gin
+	ginMode, err_v := utils.GetEnvVariable("GIN_MODE")
+	if err_v != nil {
+		log.Printf("Main: No se pudo cargar GIN_MODE, usando 'debug' por defecto: %v", err_v)
+		ginMode = "debug"
+	}
+
+	if ginMode == "release" {
+		gin.SetMode(gin.ReleaseMode)
+	} else {
+		gin.SetMode(gin.DebugMode)
+	}
+
+	// Configurar la base de datos
+	uriMongo, err := utils.GetEnvVariable("URIMongo")
 	if err != nil {
-		log.Fatalf("Error al iniciar el servidor de BD.  URIMongo no configurado: %v", err)
-		uriMongo = "mongodb://localhost:27017" // Valor por defecto si no se configura
+		log.Printf("Main: Error cargando URIMongo, usando valor predeterminado: %v", err)
+		uriMongo = "mongodb://localhost:27017"
 	}
 
-	nameMongo, err := utils.ObtenerVariableDeEntorno("NameMongo")
+	nameMongo, err := utils.GetEnvVariable("NameMongo")
 	if err != nil {
-		log.Fatalf("Error al iniciar el servidor. Nombre del servidor no configurado: %v", err)
-		nameMongo = "MongoChat" // Valor por defecto si no se configura
+		log.Printf("Main: Error cargando NameMongo, usando valor predeterminado: %v", err)
+		nameMongo = "MongoChat"
 	}
 
-	persistencia, err := persistence.NuevaMongoPersistencia(uriMongo, nameMongo)
+	persistence, err := persistence.NewMongoPersistence(uriMongo, nameMongo)
 	if err != nil {
-		log.Fatalf("Error al iniciar el servidor de Base de datos. Pool de conexiones fallida: %v", err)
-		return
+		log.Fatalf("Main: Error inicializando MongoPersistence: %v", err)
 	}
 
-	secMod := services.CrearSecModServidorChat(persistencia, "gochat_config.json")
-	salasManager := secMod.GestionSalas
+	// Leer el nombre del archivo de configuración desde la variable de entorno
+	configFile, err := utils.GetEnvVariable("GOCHAT_CONFIG_FILE")
+	if err != nil {
+		log.Printf("Main: No se encontró GOCHAT_CONFIG_FILE, usando 'gochat.json' por defecto: %v", err)
+		configFile = "gochat.json"
+	}
+	log.Printf("Main:  Cargando archivo de configuración: %s", configFile)
+	secMod := services.CreateChatServerModule(persistence, configFile)
+	roomManager := secMod.RoomManagement
 
-	// Imprimimos la sala principal
-	log.Printf("Sala Principal: %s, ID: %s\n", salasManager.SalaPrincipal.RoomName, salasManager.SalaPrincipal.RoomId)
+	log.Printf("Sala principal: %s, ID: %s\n", roomManager.MainRoom.Room.RoomName, roomManager.MainRoom.Room.RoomId)
 
-	// Imprimimos las salas fijas
-	for id, sala := range salasManager.SalasFijas {
-		log.Printf("Sala Fija: %s, ID: %s\n", sala.RoomName, id)
+	for id, room := range roomManager.FixedRooms {
+		log.Printf("Main: Sala fija: %s, ID: %s\n", room.RoomName, id)
 	}
 
+	// Crear un enrutador de Gin
 	r := gin.Default()
 
-	// Middleware CORS
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "x-gochat"},
-		AllowCredentials: true,
-	}))
+	// Crear instancias de los servicios
+	statusService := api.NewStatusService()
+	metricsService := api.NewMetricsService()
 
-	// Middleware para comprobar el encabezado "x-gochat" en cada solicitud
-	r.Use(func(c *gin.Context) {
-		// Si es una solicitud WebSocket, no verificamos el encabezado
-		if c.Request.Method == "GET" && c.Request.URL.Path == "/ws" {
-			// Esto es WebSocket, no verificamos el encabezado aquí
-			c.Next()
-			return
-		}
-
-		// Si no es WebSocket, verificar el encabezado "x-gochat"
-		goChatHeader := c.GetHeader("x-gochat")
-		if goChatHeader == "" {
-			// Si no está presente, devolver error y detener la ejecución
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "nok",
-				"message": "Falta el parámetro 'x-gochat' en la solicitud",
-			})
-			c.Abort() // Detener el procesamiento de la solicitud
-			return
-		}
-		log.Printf("Servidor goChatHeader en %s", goChatHeader)
-		c.Next()
-	})
-
-	// Configurar las rutas para la API REST
-	r.POST("/login", api.LoginHandler)
-	r.POST("/newmessage", api.NewMessageHandler)
-
-	// Configurar WebSocket para manejar las conexiones
-	r.GET("/ws", comm.WebSocketHandler)
-
-	// Configuración del servidor
-	server, err := utils.ObtenerVariableDeEntorno("NameServer")
+	// Rutas para monitoreo o métricas
+	r.GET("/status", statusService.Status)
+	r.GET("/metrics", metricsService.Metrics)
+	// Rutas de login y logout
+	r.POST("/login", api.LoginHandler)   // Rutas de Login
+	r.POST("/logout", api.LogoutHandler) // Rutas de Logout
+	// Rutas de chat
+	// Configurar el servidor
+	server, err := utils.GetEnvVariable("NameServer")
 	if err != nil {
-		log.Fatalf("Error al iniciar el servidor. Nombre del servidor no configurado: %v", err)
-		server = "localhost" // Valor por defecto si no se configura
+		log.Printf("Main: Error cargando NameServer, usando 'localhost' por defecto: %v", err)
+		server = "localhost"
 	}
 
-	port, err := utils.ObtenerVariableDeEntorno("PortServer")
+	port, err := utils.GetEnvVariable("PortServer")
 	if err != nil {
+		log.Printf("Main: Error cargando PortServer, usando '8081' por defecto: %v", err)
 		port = "8081"
-		log.Fatalf("Error al iniciar el servidor: %v", err)
 	}
 
-	// Dirección completa para iniciar el servidor
 	address := fmt.Sprintf("%s:%s", server, port)
-	log.Printf("Servidor escuchando en %s", address)
+	log.Printf("Main: Servidor escuchando en %s", address)
 
-	// Iniciar el servidor de forma concurrente, y manejar tanto HTTP como WebSocket
-	go func() {
-		err := r.Run(address)
-		if err != nil {
-			log.Fatalf("Error al iniciar el servidor HTTP: %v", err)
-		}
-	}()
-	// Iniciar servidor para pprof en un goroutine
-	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()
-	// Mantener el servidor activo
-	select {} // Mantener el servidor activo
+	// Iniciar servidor HTTP
+	if err := r.Run(address); err != nil {
+		log.Fatalf("Error al iniciar el servidor HTTP: %v", err)
+	}
 }
