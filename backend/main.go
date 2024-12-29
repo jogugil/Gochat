@@ -33,8 +33,8 @@ func main() {
 	utils.LoadEnvironmentVariables()
 
 	filter := &FilteredWriter{
-		allowedClasses: []string{"Main", "PostListHandler", "WebSocketHandler", "RoomManagement", "NewMessageHandler",
-			"ChatServerModule", "LocalRoom", "RoomManagement"},
+		allowedClasses: []string{"Main", "BrokerNats", "NatsTransformer", "RoomManagement", "NewMessageHandler",
+			"ChatServerModule", "LocalRoom", "RoomManagement", "UserManagement", "HandleNewMessages"},
 		writer: io.Discard, // Initially don't log anywhere
 	}
 

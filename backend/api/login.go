@@ -66,7 +66,7 @@ func LoginHandler(c *gin.Context) {
 		// Verificar si el error contiene el código específico de nickname en uso
 		if strings.Contains(err.Error(), "CODL00") {
 			// Actualizar el objeto de respuesta para el caso de nickname en uso
-			responseData["status"] = "nickname_taken"
+			responseData["status"] = "nok"
 			responseData["message"] = "El nickname ya está en uso"
 			c.JSON(http.StatusOK, responseData)
 		} else {

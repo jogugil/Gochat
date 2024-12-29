@@ -60,7 +60,7 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 	// Conectar a NATS
 	conn, err := nats.Connect(url)
 	if err != nil {
-		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al conectar a NATS: %w", err)
+		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al conectar a NATS:=> %w -- url:[%s]", err, url)
 	}
 
 	// Inicializar JetStream
@@ -79,28 +79,28 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 		config:  config,
 	}, nil
 }
+
 func (b *BrokerNats) OnMessage(topic string, callback func(interface{})) error {
 	// Suscripción al topic
 	_, err := b.conn.Subscribe(topic, func(m *nats.Msg) {
+
 		// Construir el mensaje NATS personalizado
+		log.Printf("BrokerNats: OnMessage:  m.Subject: %s \n", m.Subject)
 		natsMsg := &NatsMessage{
 			Subject: m.Subject,
-			Data:    m.Data,                       // Sin conversión, mantiene el tipo []byte
-			Headers: convertNatsHeaders(m.Header), // Manejar los encabezados si están habilitados
+			Data:    m.Data,
 		}
-		// Convertir NatsMessage a entities.Message
-		rawMsg, err := json.Marshal(natsMsg)
-		if err != nil {
-			// Manejar el error de serialización
-			fmt.Println("Error serializando el mensaje NATS:", err)
-			return
-		}
-		message, err := b.adapter.TransformFromExternal(rawMsg)
+		log.Printf("BrokerNats: OnMessage:  natsMsg.Subject: %s \n", natsMsg.Subject)
+		log.Printf("BrokerNats: OnMessage:  natsMsg.Data: %s \n", natsMsg.Data)
+
+		message, err := b.adapter.TransformFromExternal(natsMsg.Data)
+
 		if err != nil {
 			// Manejar el error si es necesario
 			fmt.Println("Error transformando el mensaje:", err)
 			return
 		}
+		log.Printf("BrokerNats: OnMessage:  message: %v\n", message)
 		// Llamar al callback con el mensaje deserializado
 		callback(message)
 	})
@@ -108,27 +108,14 @@ func (b *BrokerNats) OnMessage(topic string, callback func(interface{})) error {
 	return err
 }
 
-// Convertir los encabezados de NATS a un mapa de string
-func convertNatsHeaders(headers nats.Header) map[string]string {
-	result := make(map[string]string)
-	if headers != nil {
-		for key, values := range headers {
-			if len(values) > 0 {
-				result[key] = values[0] // Usar solo el primer valor
-			}
-		}
-	}
-	return result
-}
-
 // GetMessagesFromId obtiene mensajes desde un MessageId específico en JetStream.
-func (b *BrokerNats) GetMessagesFromId(roomId string, messageId uuid.UUID) ([]Message, error) {
+func (b *BrokerNats) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Message, error) {
 	// Construye el subject con el formato adecuado (por ejemplo, "chat.<roomId>").
-	subject := fmt.Sprintf("chat.%s", roomId)
+	subject := fmt.Sprintf("chat.%s", topic)
 
 	// Crea un consumer temporal para recuperar mensajes desde un punto específico.
 	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String())
-	streamName := roomId // Suponiendo que el stream tiene el mismo nombre que roomId.
+	streamName := topic // Suponiendo que el stream tiene el mismo nombre que roomId.
 
 	// Configuración del consumer.
 	consumerConfig := &nats.ConsumerConfig{
@@ -277,14 +264,14 @@ func (b *BrokerNats) Subscribe_native(topic string, handler func(message []byte)
 }
 
 // GetUnreadMessages obtiene los mensajes no leídos desde un subject de NATS.
-func (b *BrokerNats) GetUnreadMessages(subject string) ([]Message, error) {
+func (b *BrokerNats) GetUnreadMessages(topic string) ([]Message, error) {
 	// Establecer la conexión con JetStream
 	js, err := b.conn.JetStream()
 	if err != nil {
 		log.Printf("BrokerNats: GetUnreadMessages: error conectando a JetStream: %v", err)
 		return nil, fmt.Errorf("error conectando a JetStream: %w", err)
 	}
-
+	subject := topic
 	// Suscripción durable al subject
 	sub, err := js.SubscribeSync(subject, nats.Durable("message-consumer"))
 	if err != nil {
@@ -329,10 +316,10 @@ func (b *BrokerNats) GetUnreadMessages(subject string) ([]Message, error) {
 
 	return messages, nil
 }
-func (b *BrokerNats) GetMessagesWithLimit(roomId string, messageId uuid.UUID, count int) ([]Message, error) {
-	subject := fmt.Sprintf("chat.%s", roomId)
+func (b *BrokerNats) GetMessagesWithLimit(topic string, messageId uuid.UUID, count int) ([]Message, error) {
+	subject := topic
 	consumerName := fmt.Sprintf("consumer-%s", uuid.New().String())
-	streamName := roomId
+	streamName := topic
 
 	consumerConfig := &nats.ConsumerConfig{
 		Durable:        consumerName,
@@ -427,9 +414,9 @@ func (b *BrokerNats) CreateTopic(topic string) error {
 }
 
 // Implementación de Acknowledge para NATS.
-func (b *BrokerNats) Acknowledge(messageID string) error {
+func (b *BrokerNats) Acknowledge(messageID uuid.UUID) error {
 	// NATS JetStream requiere ACK explícitos para garantizar la entrega de los mensajes.
-	err := b.conn.Publish(messageID, []byte("ACK"))
+	err := b.conn.Publish(messageID.String(), []byte("ACK"))
 	if err != nil {
 		return fmt.Errorf("BrokerNats: Acknowledge: error al enviar ACK: %w", err)
 	}
@@ -437,7 +424,7 @@ func (b *BrokerNats) Acknowledge(messageID string) error {
 }
 
 // Implementación de Retry para NATS.
-func (b *BrokerNats) Retry(messageID string) error {
+func (b *BrokerNats) Retry(messageID uuid.UUID) error {
 	// NATS no tiene un mecanismo de reintentos automático, pero se puede simular reenviando el mensaje.
 	// Aquí se reenvía el mensaje como ejemplo.
 	return nil // Personaliza este método según tus necesidades.

@@ -63,10 +63,10 @@ type MessageBroker interface {
 	SubscribeWithPattern(pattern string, handler func(message *Message) error) error
 
 	// Confirma la recepción de un mensaje, útil para sistemas que requieren confirmación manual.
-	Acknowledge(messageID string) error
+	Acknowledge(messageID uuid.UUID) error
 
 	// Reintenta el envío de un mensaje fallido, si el broker soporta reintentos.
-	Retry(messageID string) error
+	Retry(messageID uuid.UUID) error
 
 	// Obtiene las métricas actuales del broker (por ejemplo, número de mensajes enviados, latencia, etc.).
 	GetMetrics() (map[string]interface{}, error)
@@ -75,13 +75,13 @@ type MessageBroker interface {
 	CreateTopic(topic string) error
 
 	// Obtiene los mensajes no leídos de un tópico (basado en roomId).
-	GetUnreadMessages(roomId string) ([]Message, error)
+	GetUnreadMessages(topic string) ([]Message, error)
 
 	// Retrieves messages from the broker by their ID.
-	GetMessagesFromId(roomId string, messageId uuid.UUID) ([]Message, error)
+	GetMessagesFromId(topic string, messageId uuid.UUID) ([]Message, error)
 
 	// Devuelve count entities.Message del rtopic roomId
-	GetMessagesWithLimit(roomId string, messageId uuid.UUID, count int) ([]Message, error)
+	GetMessagesWithLimit(topic string, messageId uuid.UUID, count int) ([]Message, error)
 	// Cierra la conexión con el broker, liberando recursos.
 	Close() error
 }

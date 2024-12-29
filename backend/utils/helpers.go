@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+// Función optimizada para convertir fecha en formato RFC3339
+func ConvertToRFC3339(date string) (time.Time, error) {
+	// Detección por longitud de la cadena
+	switch len(date) {
+	case 10: // Probablemente en formato "YYYY-MM-DD"
+		return time.Parse("2006-01-02", date)
+	case 19: // Probablemente en formato "DD/MM/YYYY HH:mm:ss"
+		return time.Parse("02/01/2006 15:04:05", date)
+	case 20: // Probablemente en formato "YYYY-MM-DD HH:mm:ss"
+		return time.Parse("2006-01-02 15:04:05", date)
+	case 25: // Probablemente en formato "YYYY-MM-DD HH:mm:ss"
+		return time.Parse("2006-01-02T15:04:05-07:00", date)
+	default:
+		log.Printf("formato de fecha cliente no reconocido: %s", date)
+		return time.Now(), fmt.Errorf("formato de fecha no reconocido")
+	}
+}
+
 // Log the error to the log file
 func LogCriticalError(errorMessage string) {
 	// Get the log file path from the environment variable

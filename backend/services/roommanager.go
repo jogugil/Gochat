@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/nats-io/nats.go"
 )
 
 type RoomManagement struct {
@@ -19,8 +18,6 @@ type RoomManagement struct {
 	mu          sync.RWMutex                    // Read/write mutex
 	persistence *entities.Persistence           // Persistence to store data
 	once        sync.Once                       // To ensure single initialization
-	messageSubs []*nats.Subscription            // Slice de suscripciones a mensajes generales
-
 }
 
 var instance *RoomManagement // Singleton instance of RoomManagement
@@ -85,29 +82,29 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 	gochat, ok := config["gochat"].(map[string]interface{})
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'gochat' no es un mapa.")
-		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'gochat' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'gochat' no es un mapa")
 	}
 
 	mainroom, ok := gochat["mainroom"].(map[string]interface{})
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'mainroom' no es un mapa.")
-		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'mainroom' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'mainroom' no es un mapa")
 	}
 
 	name, ok := mainroom["name"].(string)
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
-		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'name' no es un mapa")
 	}
 	server_topic, ok := mainroom["server_topic"].(string)
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
-		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'server_topic' no es un mapa")
 	}
 	client_topic, ok := mainroom["client_topic"].(string)
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
-		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
+		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'client_topic' no es un mapa")
 	}
 
 	// Mostrar el valor del nombre
@@ -152,23 +149,23 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 		// Parsear el ID de la sala
 		roomID, err := uuid.Parse(roomData["id"].(string))
 		if err != nil {
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v", err)
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v -- roomName:%s", err, roomData["name"].(string))
 			continue
 		}
 		name, ok = roomData["name"].(string)
 		if !ok {
 			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa")
 		}
 		server_topic, ok = roomData["server_topic"].(string)
 		if !ok {
 			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa")
 		}
 		client_topic, ok = roomData["client_topic"].(string)
 		if !ok {
 			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa")
 		}
 		// Crear la sala con los datos obtenidos
 		room := &models.LocalRoom{
@@ -231,7 +228,9 @@ func (rm *RoomManagement) GetRoomByID(roomID uuid.UUID) (*models.LocalRoom, erro
 	return nil, fmt.Errorf("the room with ID %s does not exist", roomID)
 }
 
-func (rm *RoomManagement) SendMessage(roomID uuid.UUID, nickname, message string, user entities.User) error {
+func (rm *RoomManagement) SendMessage(newMessage *entities.Message, user entities.User) error {
+
+	roomID := newMessage.RoomID
 	log.Printf("RoomManagement: SendMessage: Sending message to room with ID: %s", roomID)
 
 	// First, we get the room with RLock, as we are reading
@@ -241,11 +240,10 @@ func (rm *RoomManagement) SendMessage(roomID uuid.UUID, nickname, message string
 		return err
 	}
 
-	newMessage := models.BuildMessage(user.Nickname, message, room.Room.RoomName, roomID, 1, "es")
 	log.Printf("RoomManagement: New message created: %+v\n", newMessage)
 
 	// Modify message history
-	rm.MainRoom.SendMessage(user, *newMessage)
+	room.SendMessage(user, *newMessage)
 	log.Printf("RoomManagement: SendMessage: Message sent to room with ID: %s - %v \n", roomID, newMessage)
 	return nil
 }
@@ -266,10 +264,10 @@ func (rm *RoomManagement) GetMessagesFromId(roomID uuid.UUID, messageID uuid.UUI
 		return nil, fmt.Errorf("RoomManagement: room not found with ID: %s", roomID)
 	}
 
-	messages, err := rm.GetMessagesFromId(roomID, messageID)
-	if err != nil {
-		log.Printf("RoomManagement: GetMessagesFromId: Error getting messages: %v", err)
-		return nil, fmt.Errorf("RoomManagement: error in GetByLastMessageId: %v", err)
+	messages := room.GetMessagesFromId(messageID)
+	if messages == nil {
+		log.Printf("RoomManagement: GetMessagesFromId: Error getting messages")
+		return nil, fmt.Errorf("RoomManagement: error in GetByLastMessageId")
 	}
 
 	log.Printf("RoomManagement: GetMessagesFromId: Messages obtained successfully (%d messages)", len(messages))
@@ -278,14 +276,25 @@ func (rm *RoomManagement) GetMessagesFromId(roomID uuid.UUID, messageID uuid.UUI
 
 // Function to get all messages from a room
 func (rm *RoomManagement) GetMessages(roomID uuid.UUID) ([]entities.Message, error) {
-	log.Printf("RoomManagement: GetMessages: Getting all messages from room %s", roomID)
+	log.Printf("RoomManagement: GetMessages: Getting all messages from room %s", roomID.String())
 	rm.mu.RLock() // Reading, can be done concurrently
 	defer rm.mu.RUnlock()
 
-	messages, err := rm.GetMessages(roomID)
+	room, err := rm.GetRoomByID(roomID)
 	if err != nil {
-		log.Printf("RoomManagement: GetMessages: Error getting messages: %v", err)
-		return nil, fmt.Errorf("RoomManagement: error in GetMessages: %v", err)
+		log.Printf("RoomManagement: GetMessagesFromId: Error getting room: %v", err)
+		return nil, fmt.Errorf("the room with ID %s does not exist", roomID)
+	}
+	if room == nil {
+
+		log.Printf("RoomManagement: GetMessagesFromId: Error getting room: room is nil")
+		return nil, fmt.Errorf("RoomManagement: room not found with ID: %s", roomID)
+	}
+	log.Printf("RoomManagement: GetMessages: Getting all messages from roomName %s -- topic: %s", room.RoomName, room.ServerTopic)
+	messages := room.GetRoomMessages()
+	if messages == nil {
+		log.Printf("RoomManagement: GetMessages: Error getting messages")
+		return nil, fmt.Errorf("RoomManagement: error in GetMessages")
 	}
 
 	log.Printf("RoomManagement: GetMessages: Messages obtained successfully (%d messages)", len(messages))

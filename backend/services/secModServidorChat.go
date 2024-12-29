@@ -133,7 +133,12 @@ func (chatModule *ChatServerModule) ExecuteLogout(token string) error {
 }
 
 // ExecuteSendMessage allows a user to send a message
-func (chatModule *ChatServerModule) ExecuteSendMessage(nickname, token, message string, roomId uuid.UUID) error {
+func (chatModule *ChatServerModule) ExecuteSendMessage(msg *entities.Message) error {
+
+	nickname := msg.Nickname
+	token := msg.Token
+	message := msg.MessageText
+	roomId := msg.RoomID
 	log.Printf("ChatServerModule: ExecuteSendMessage: Executing send message: %s for user: %s in room: %v\n", message, nickname, roomId)
 
 	// Validate if the user is authorized to send the message
@@ -158,7 +163,7 @@ func (chatModule *ChatServerModule) ExecuteSendMessage(nickname, token, message 
 		return err
 	}
 	// Call the logic to send the message
-	err = chatModule.RoomManagement.SendMessage(roomId, nickname, message, user)
+	err = chatModule.RoomManagement.SendMessage(msg, user)
 	if err != nil {
 		log.Printf("ChatServerModule: ExecuteSendMessage: CODM04: Error sending message: %v\n", err)
 		return err

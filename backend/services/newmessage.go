@@ -16,9 +16,6 @@ func HandleNewMessages(msg interface{}) {
 
 	go func() {
 
-		// Estructura para deserializar el mensaje
-		requestData := message
-
 		// Log para ver los datos recibidos
 		log.Printf("HandleNewMessages: Datos recibidos: %+v", message)
 
@@ -30,12 +27,8 @@ func HandleNewMessages(msg interface{}) {
 
 			return
 		}
-
-		// Parsear el RoomId como UUID
-		idSalaUUID := requestData.RoomID
-
 		// Llamar al método para enviar el mensaje
-		err = secMod.ExecuteSendMessage(requestData.Nickname, requestData.Token, requestData.MessageText, idSalaUUID)
+		err = secMod.ExecuteSendMessage(message)
 		if err != nil {
 			// Log para mostrar error al intentar enviar el mensaje
 			log.Printf("HandleNewMessages: Error al enviar el mensaje: %v", err)
@@ -44,7 +37,7 @@ func HandleNewMessages(msg interface{}) {
 		}
 
 		// Log para confirmar que el mensaje fue enviado exitosamente
-		log.Printf("HandleNewMessages: Mensaje enviado exitosamente a la sala %s: %s", requestData.RoomName, requestData.MessageText)
+		log.Printf("HandleNewMessages: Mensaje enviado exitosamente a la sala %s: %s", message.RoomName, message.MessageText)
 
 	}()
 

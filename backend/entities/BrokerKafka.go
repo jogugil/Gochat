@@ -237,7 +237,7 @@ func (b *BrokerKafka) GetUnreadMessages(topic string) ([]Message, error) {
 }
 
 // GetRoomMessagesByRoomId obtiene los mensajes asociados a un `roomId` específico.
-func (k *BrokerKafka) GetRoomMessagesByRoomId(roomId string) ([]Message, error) {
+func (k *BrokerKafka) GetRoomMessagesByRoomId(topic string) ([]Message, error) {
 	// Configurar el consumidor de Kafka.
 	config := sarama.NewConfig()
 	config.Consumer.Return.Errors = true
@@ -247,8 +247,6 @@ func (k *BrokerKafka) GetRoomMessagesByRoomId(roomId string) ([]Message, error) 
 	}
 	defer consumer.Close()
 
-	// Obtener las particiones de un topic basado en roomId.
-	topic := fmt.Sprintf("room_%s_messages", roomId)
 	partitionList, err := consumer.Partitions(topic)
 	if err != nil {
 		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId:Error obteniendo particiones: %v", err)
@@ -327,7 +325,7 @@ func (k *BrokerKafka) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Me
 }
 
 // GetMessagesWithLimit obtiene los mensajes a partir de un `messageId` específico y limita la cantidad de mensajes recuperados.
-func (k *BrokerKafka) GetMessagesWithLimit(roomId string, messageId uuid.UUID, count int) ([]Message, error) {
+func (k *BrokerKafka) GetMessagesWithLimit(topic string, messageId uuid.UUID, count int) ([]Message, error) {
 	// Configurar el consumidor de Kafka.
 	config := sarama.NewConfig()
 	config.Consumer.Return.Errors = true
@@ -336,9 +334,6 @@ func (k *BrokerKafka) GetMessagesWithLimit(roomId string, messageId uuid.UUID, c
 		return nil, fmt.Errorf("BrokerKafka: GetMessagesWithLimit: error creando el consumidor Kafka: %v", err)
 	}
 	defer consumer.Close()
-
-	// Crear el tópico basado en el roomId.
-	topic := fmt.Sprintf("room_%s_messages", roomId)
 
 	// Obtener las particiones del tópico.
 	partitions, err := consumer.Partitions(topic)
@@ -397,13 +392,13 @@ func (k *BrokerKafka) SubscribeWithPattern(pattern string, handler func(message 
 }
 
 // Implementación de Acknowledge (sin impacto en Kafka).
-func (k *BrokerKafka) Acknowledge(messageID string) error {
+func (k *BrokerKafka) Acknowledge(messageID uuid.UUID) error {
 	// Kafka maneja ACKs implícitamente, así que esta función no es aplicable.
 	return nil
 }
 
 // Implementación de Retry (Kafka no soporta reintentos de mensajes, pero se puede personalizar).
-func (k *BrokerKafka) Retry(messageID string) error {
+func (k *BrokerKafka) Retry(messageID uuid.UUID) error {
 	// Lógica para intentar reenviar un mensaje, si es necesario.
 	return nil
 }

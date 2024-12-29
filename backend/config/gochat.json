@@ -10,24 +10,24 @@
       "op": "post" 
     },
     "mainroom": {
-      "id": "56c4f5f3-c818-4931-98f8-300f34c35111",
+      "id": "56c4f5f3-c818-4931-98f8-100f34c35d7f",
       "name": "Sala Principal",
       "server_topic": "principal.server",
-      "client_topic": "principal.cliente"
+      "client_topic": "principal.client"
     }
   },
   "salas": [
     {
-      "id": "56c4f5f3-c818-4931-98f8-300f34c35d7f",
+      "id": "56c4f5f3-c818-4931-98f8-200f34c35d7f",
       "name": "Sala Fija 1",
       "server_topic": "fija1.server",
-      "client_topic": "fija1.cliente"
+      "client_topic": "fija1.client"
     },
     {
-      "id": "56c4f5f3-c818-4931-98f8-300f34c35d7g",
+      "id": "56c4f5f3-c818-4931-98f8-300f34c35d7f",
       "name": "Sala Fija 2",
       "server_topic": "fija2.server",
-      "client_topic": "fija3.cliente"
+      "client_topic": "fija2.client"
 
     }
   ],

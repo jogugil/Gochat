@@ -29,7 +29,7 @@ type KafkaMessage struct {
 type NatsMessage struct {
 	Subject string            `json:"subject"`
 	Data    []byte            `json:"data"`
-	Headers map[string]string `json:"header"`
+	Headers map[string]string `json:"headers"`
 }
 
 // Clase Mensaje

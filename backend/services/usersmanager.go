@@ -27,80 +27,81 @@ func NewUserManagement() *UserManagement {
 	}
 	// Use once.Do to ensure the setup is performed only once
 	userInstance.onceUser.Do(func() {
-		log.Println("NewUserManagement: Initializing the User Management instance.")
+		log.Println("UserManagement: NewUserManagement:  Initializing the User Management instance.")
 		// Here you could load users from a database or file if necessary
 		// Example of loading users (depends on your implementation and needs)
 		// instance.LoadUsersFromFile("users.txt")
-		log.Println("NewUserManagement: Initialization completed.")
+		log.Println("UserManagement: NewUserManagement:  Initialization completed.")
 	})
 	return userInstance
 }
 
 func (management *UserManagement) FindUserByToken(token string) (entities.User, error) {
-	log.Println("Starting search for user by token:", token)
+	log.Println("UserManagement:FindUserByToken: Starting search for user by token:", token)
 	for _, user := range management.Users {
 		if user.Token == token {
 			log.Println("User found:", user.Nickname)
 			return *user, nil
 		}
 	}
-	log.Println("User not found for token:", token)
+	log.Println("UserManagement:FindUserByToken: User not found for token:", token)
 	return entities.User{}, errors.New("user not found")
 }
 
 func (management *UserManagement) GetUserToken(nickname string) (string, error) {
-	log.Println("Getting token for user:", nickname)
+	log.Println("UserManagement: GetUserToken: Getting token for user:", nickname)
+	log.Printf("UserManagement: GetUserToken: Getting token for user: %d - nickname : %s", len(management.Users), management.Users[0].Nickname)
 	for _, user := range management.Users {
 		if user.Nickname == nickname {
-			log.Println("Token found for user:", user.Token)
+			log.Println("UserManagement:GetUserToken: Token found for user:", user.Token)
 			return user.Token, nil
 		}
 	}
-	log.Println("User not found for nickname:", nickname)
+	log.Println("UserManagement: GetUserToken: User not found for nickname:", nickname)
 	return "", errors.New("user not found")
 }
 
 // VerifyExistingUser checks if a user with the given nickname is already registered
 func (management *UserManagement) VerifyExistingUser(nickname string) bool {
-	log.Println("Verifying if user already exists:", nickname)
+	log.Println("UserManagement: VerifyExistingUser: Verifying if user already exists:", nickname)
 	for _, user := range management.Users {
 		if user.Nickname == nickname {
-			log.Println("User already registered:", nickname)
+			log.Println("UserManagement: VerifyExistingUser: User already registered:", nickname)
 			return false // User already registered
 		}
 	}
-	log.Println("User not registered:", nickname)
+	log.Println("UserManagement: VerifyExistingUser: User not registered:", nickname)
 	return true // User not registered
 }
 
 // Function that registers a user and saves it in the database
 func (management *UserManagement) RegisterUser(nickname string, token string, room *entities.Room) (*entities.User, error) {
-	log.Println("Registering new user:", nickname)
+	log.Println("UserManagement: RegisterUser: Registering new user:", nickname)
 
 	// Create a new user with the provided room
 	newUser := models.NewGoChatUser(nickname, room)
-	log.Println("New user created:", newUser.Nickname)
+	log.Println("UserManagement: RegisterUser: New user created:", newUser.Nickname)
 
 	// Create a new instance of MongoPersistence
 	mongoPersistence, err := persistence.GetDBInstance()
 	if err != nil {
-		log.Println("Error creating MongoPersistence instance:", err)
+		log.Println("UserManagement: RegisterUser: Error creating MongoPersistence instance:", err)
 		return nil, err
 	}
 
 	// Save the user in the database
-	log.Println("Saving user to the database...")
+	log.Println("UserManagement: RegisterUser: Saving user to the database...")
 	err = (*mongoPersistence).SaveUser(newUser)
 	if err != nil {
-		log.Println("Error saving the user:", err)
+		log.Println("UserManagement: RegisterUser: Error saving the user:", err)
 		return nil, err
 	} else {
-		log.Println("User saved successfully to the database")
+		log.Println("UserManagement: RegisterUser: User saved successfully to the database")
 	}
 
 	// Add the user to the in-memory list of users
 	management.Users = append(management.Users, newUser)
-	log.Println("User added to in-memory list:", newUser.Nickname)
+	log.Println("UserManagement: RegisterUser: User added to in-memory list:", newUser.Nickname)
 	return newUser, nil
 }
 
@@ -117,32 +118,32 @@ func (g *UserManagement) GetActiveUsers() []*entities.User {
 	return activeUsers
 }
 func (management *UserManagement) Logout(token string) error {
-	log.Println("Intentando logout para el usuario con token:", token)
+	log.Println("UserManagement: Logout: Intentando logout para el usuario con token:", token)
 
 	// Buscar el usuario por token
 	user, err := management.FindUserByToken(token)
 	if err != nil {
-		log.Println("Error al encontrar usuario:", err)
+		log.Println("UserManagement: Logout: Error al encontrar usuario:", err)
 		return err
 	}
 
 	// Cambiar el estado del usuario a Inactive
 	user.State = types.Inactive
-	log.Println("Estado del usuario cambiado a Inactive:", user.Nickname)
+	log.Println("UserManagement: Logout: Estado del usuario cambiado a Inactive:", user.Nickname)
 
 	// Guardar los cambios en la base de datos
 	mongoPersistence, err := persistence.GetDBInstance()
 	if err != nil {
-		log.Println("Error al obtener instancia de persistencia:", err)
+		log.Println("UserManagement: Logout: Error al obtener instancia de persistencia:", err)
 		return err
 	}
 
 	err = (*mongoPersistence).SaveUser(&user)
 	if err != nil {
-		log.Println("Error al guardar usuario en la base de datos:", err)
+		log.Println("UserManagement: Logout: Error al guardar usuario en la base de datos:", err)
 		return err
 	}
 
-	log.Println("Logout exitoso para el usuario:", user.Nickname)
+	log.Println("UserManagement: Logout: Logout exitoso para el usuario:", user.Nickname)
 	return nil
 }
