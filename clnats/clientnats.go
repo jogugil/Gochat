@@ -85,6 +85,23 @@ type LoginResponse struct {
 	Roomname string `json:"roomname"`
 }
 
+// Estructura para los usuarios activos
+type AliveUsers struct {
+	Nickname       string `json:"nickname"`
+	LastActionTime string `json:"lastactiontime"`
+}
+
+// Estructura para la respuesta general
+type ResponseUser struct {
+	Status      string       `json:"status"`
+	Message     string       `json:"message"`
+	TokenSesion string       `json:"tokenSesion"`
+	Nickname    string       `json:"nickname"`
+	RoomId      string       `json:"roomId"`
+	X_GoChat    string       `json:"x_gochat"`
+	AliveUsers  []AliveUsers `json:"data,omitempty"`
+}
+
 // Función para realizar el login al API REST
 func login(nickname string) (*LoginResponse, error) {
 	loginReq := LoginRequest{
@@ -115,7 +132,7 @@ func login(nickname string) (*LoginResponse, error) {
 }
 
 // Función para conectarse a NATS, enviar un mensaje y recibir una respuesta
-func connectToNATS(token, roomId, roomName, nickname string) {
+func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
 	// Conectarse al servidor NATS
 	nc, err := nats.Connect(nats.DefaultURL)
 	if err != nil {
@@ -131,12 +148,12 @@ func connectToNATS(token, roomId, roomName, nickname string) {
 	natsMsg1, err := ConvertToNatsMessage("principal.server", msg1)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return
+		return nil
 	}
 	natsMsg2, err := ConvertToNatsMessage("principal.server", msg2)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return
+		return nil
 	}
 
 	fmt.Printf("Conectado a NATS\n")
@@ -174,8 +191,7 @@ func connectToNATS(token, roomId, roomName, nickname string) {
 		log.Fatalf("Error al suscribirse a principal.client: %v", err)
 	}
 
-	// Mantener el cliente NATS escuchando por mensajes
-	select {}
+	return nc
 }
 
 // Función para convertir Message a NatsMessage
@@ -247,6 +263,61 @@ func GenerateMessage2(nickname, token, roomId, roomName string) Message {
 		},
 	}
 }
+func obtenerUsuarios(nc *nats.Conn, nickname, idsala, token string) (ResponseUser, error) {
+	// Estructura del mensaje a enviar
+	requestData := struct {
+		RoomId      string `json:"roomid"`
+		TokenSesion string `json:"tokensesion"`
+		Nickname    string `json:"nickname"`
+		Operation   string `json:"operation"`
+		Topic       string `json:"topic"`
+		X_GoChat    string `json:"x_gochat"`
+	}{
+		RoomId:      idsala,
+		TokenSesion: token,
+		Nickname:    nickname,
+		Operation:   "listusers",
+		Topic:       nickname + ".client",
+		X_GoChat:    "http://localhost:8081",
+	}
+
+	// Convertir el mensaje a JSON
+	jsonData, err := json.Marshal(requestData)
+	if err != nil {
+		return ResponseUser{}, fmt.Errorf("error al convertir a JSON: %v", err)
+	}
+
+	// Canal para manejar la respuesta
+	responseChannel := make(chan *nats.Msg, 1)
+
+	// Suscribirse al topic del cliente
+	subscription, err := nc.ChanSubscribe(nickname+".client", responseChannel)
+	if err != nil {
+		return ResponseUser{}, fmt.Errorf("error al suscribirse al topic: %v", err)
+	}
+	defer subscription.Unsubscribe()
+
+	// Publicar el mensaje al topic `roomlist.server`
+	err = nc.Publish("roomlistusers.server", jsonData)
+	if err != nil {
+		return ResponseUser{}, fmt.Errorf("error al publicar en roomlist.server: %v", err)
+	}
+
+	// Esperar la respuesta
+	var response ResponseUser
+	select {
+	case msg := <-responseChannel:
+		// Parsear la respuesta
+		err = json.Unmarshal(msg.Data, &response)
+		if err != nil {
+			return ResponseUser{}, fmt.Errorf("error al parsear la respuesta: %v", err)
+		}
+	case <-time.After(5 * time.Second): // Timeout de 5 segundos
+		return ResponseUser{}, fmt.Errorf("timeout al esperar la respuesta")
+	}
+
+	return response, nil
+}
 func main() {
 	// Datos de ejemplo para el login
 	nickname := "usuario123"
@@ -259,9 +330,13 @@ func main() {
 	if loginResp.Status == "ok" {
 		// Mostrar la información del login
 		fmt.Printf("Login exitoso: NickName: %s Token: %s, RoomID: %s, RoomName: %s\n", loginResp.Nickname, loginResp.Token, loginResp.Roomid, loginResp.Roomname)
-
 		// Conectar a NATS y enviar/recibir mensajes
-		connectToNATS(loginResp.Token, loginResp.Roomid, loginResp.Roomname, nickname)
+		nc := connectToNATS(loginResp.Token, loginResp.Roomid, loginResp.Roomname, loginResp.Nickname)
+		if nc != nil {
+			//Petcion de usuarios
+			obtenerUsuarios(nc, loginResp.Nickname, loginResp.Roomid, loginResp.Token)
+		}
+
 	} else {
 		fmt.Println("Error durante el login. Verifique su nickname y contraseña. Si el problema persiste")
 		fmt.Println("E:", loginResp.Message)

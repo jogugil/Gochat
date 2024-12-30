@@ -14,6 +14,10 @@
       "name": "Sala Principal",
       "server_topic": "principal.server",
       "client_topic": "principal.client"
+    },
+    "operations":{
+      "get_users": "roomlistusers.server",
+      "get_messages":"roomlistmessages.server"    
     }
   },
   "salas": [

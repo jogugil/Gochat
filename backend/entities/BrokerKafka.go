@@ -101,6 +101,17 @@ func (k *BrokerKafka) Publish(topic string, message *Message) error {
 	_, _, errsnd := k.producer.SendMessage(msg)
 	return errsnd
 }
+
+// convertHeaders transforma los RecordHeaders de Sarama a un mapa de strings
+func (k *BrokerKafka) convertHeaders(headers []*sarama.RecordHeader) map[string]interface{} {
+	result := make(map[string]interface{})
+	for _, header := range headers {
+		if header != nil {
+			result[string(header.Key)] = string(header.Value)
+		}
+	}
+	return result
+}
 func (k *BrokerKafka) OnMessage(topic string, callback func(interface{})) error {
 	// Crear un consumidor para la partición del topic
 	consumer, err := k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
@@ -115,7 +126,7 @@ func (k *BrokerKafka) OnMessage(topic string, callback func(interface{})) error 
 			kafkaMsg := &KafkaMessage{
 				Key:     string(msg.Key),
 				Value:   string(msg.Value),
-				Headers: convertHeaders(msg.Headers),
+				Headers: k.convertHeaders(msg.Headers),
 			}
 			// Convertir NatsMessage a entities.Message
 			rawMsg, err := json.Marshal(kafkaMsg)
@@ -138,15 +149,112 @@ func (k *BrokerKafka) OnMessage(topic string, callback func(interface{})) error 
 	return nil
 }
 
-// convertHeaders transforma los RecordHeaders de Sarama a un mapa de strings
-func convertHeaders(headers []*sarama.RecordHeader) map[string]string {
-	result := make(map[string]string)
-	for _, header := range headers {
-		if header != nil {
-			result[string(header.Key)] = string(header.Value)
-		}
+func (k *BrokerKafka) OnGetUsers(topic string, callback func(interface{})) error {
+	// Suscripción al topic
+	// Crear un consumidor para la partición del topic
+	consumer, err := k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
+	if err != nil {
+		return fmt.Errorf("failed to start consumer for topic %s: %w", topic, err)
 	}
-	return result
+
+	// Procesar mensajes en un goroutine
+	go func() {
+		for msg := range consumer.Messages() {
+			// Convertir los encabezados y crear el mensaje Kafka
+			kafkaMsg := &KafkaMessage{
+				Key:     string(msg.Key),
+				Value:   string(msg.Value),
+				Headers: k.convertHeaders(msg.Headers),
+			}
+			// Convertir NatsMessage a entities.Message
+			rawMsg, err := json.Marshal(kafkaMsg)
+			if err != nil {
+				// Manejar el error de serialización
+				fmt.Println("BrokerKafka: OnGetUsers: Error serializando el mensaje NATS:", err)
+				return
+			}
+			message, err := k.adapter.TransformFromExternalToGetUsers(rawMsg)
+			if err != nil {
+				// Manejar el error si es necesario
+				fmt.Println("BrokerKafka: OnGetUsers: Error transformando el mensaje:", err)
+				return
+			}
+			// Llamar al callback con el mensaje deserializado
+			callback(message)
+		}
+
+	}()
+	return nil
+}
+
+func (k *BrokerKafka) OnGetMessage(topic string, callback func(interface{})) error {
+	// Suscripción al topic
+	// Crear un consumidor para la partición del topic
+	consumer, err := k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
+	if err != nil {
+		return fmt.Errorf("failed to start consumer for topic %s: %w", topic, err)
+	}
+
+	// Procesar mensajes en un goroutine
+	go func() {
+		for msg := range consumer.Messages() {
+			// Convertir los encabezados y crear el mensaje Kafka
+			kafkaMsg := &KafkaMessage{
+				Key:     string(msg.Key),
+				Value:   string(msg.Value),
+				Headers: k.convertHeaders(msg.Headers),
+			}
+			// Convertir NatsMessage a entities.Message
+			rawMsg, err := json.Marshal(kafkaMsg)
+			if err != nil {
+				// Manejar el error de serialización
+				fmt.Println("BrokerKafka: OnGetMessage: Error serializando el mensaje NATS:", err)
+				return
+			}
+			message, err := k.adapter.TransformFromExternalToGetMessage(rawMsg)
+			if err != nil {
+				// Manejar el error si es necesario
+				fmt.Println("BrokerKafka: OnGetMessage: Error transformando el mensaje:", err)
+				return
+			}
+			// Llamar al callback con el mensaje deserializado
+			callback(message)
+		}
+
+	}()
+	return nil
+}
+
+// Publica un mensaje en un tópico específico.
+func (k *BrokerKafka) PublishGetUSers(topic string, message *ResponseListUser) error {
+	// Transforma el mensaje a su formato externo.
+	msgData, err := k.adapter.TransformToExternalUsers(message)
+	if err != nil {
+		log.Printf("BrokerNats: PublishGetUSers: Error al transformar el mensaje de la app al formato externo: %s", err)
+		return err
+	}
+	msg := &sarama.ProducerMessage{
+		Topic: topic,
+		Value: sarama.ByteEncoder(msgData),
+	}
+	_, _, errsnd := k.producer.SendMessage(msg)
+	return errsnd
+}
+
+// Publica un mensaje en un tópico específico.
+func (k *BrokerKafka) PublishGetMessages(topic string, message *ResponseListMessages) error {
+	// Transforma el mensaje a su formato externo.
+	msgData, err := k.adapter.TransformToExternalMessages(message)
+	if err != nil {
+		log.Printf("BrokerNats: PublishGetMessages: Error al transformar el mensaje de la app al formato externo: %s", err)
+		return err
+	}
+	msg := &sarama.ProducerMessage{
+		Topic: topic,
+		Value: sarama.ByteEncoder(msgData),
+	}
+	_, _, errsnd := k.producer.SendMessage(msg)
+	return errsnd
 }
 
 // Implementación del método Subscribe para Kafka.

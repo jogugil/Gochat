@@ -178,7 +178,33 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 				ClientTopic:   client_topic,
 			},
 		}
+		// Obtenemos los topics para las peticiones de lsitado de usauiios y mensajes por los usuarios al inicio del chat
+		// El usuario, al logarse, se redirige a la pantalla de login y debe mostar ya el lsitado de usaurios y mensajes antiguos en la sala
+		//Por ello se envia una petición al servidor que le devuelva el lsitado de usuarios y mensajes antiguos.
+		//De la misma forma se crearan operaciones de administación
+		/*"operations":{
+			"get_users": "roomlistusers.server",
+			"get_messages":"roomlistmessages.server"
+		  }
+		*/
+		operations, ok := gochat["operations"].(map[string]interface{})
+		if !ok {
+			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'operations' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'operations' no es un mapa")
+		}
+		get_users, ok := operations["get_users"].(string)
+		if !ok {
+			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_users' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_users' no es un mapa")
+		}
+		get_messages, ok := operations["get_messages"].(string)
+		if !ok {
+			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_messages' no es un mapa.")
+			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_messages' no es un mapa")
+		}
 
+		msgBroker.OnGetUsers(get_users, HandleGetUsersMessage)
+		msgBroker.OnGetMessage(get_messages, HandleGetMessage)
 		// Agregar la sala al mapa de salas fijas
 		rm.FixedRooms[roomID] = room
 	}

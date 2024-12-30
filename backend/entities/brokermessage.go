@@ -51,11 +51,19 @@ func MessageBrokerFactory(config map[string]interface{}) (MessageBroker, error) 
 // para interactuar con los brokers de mensajes.
 // MessageBroker define las operaciones básicas que un broker de mensajes debería soportar.
 type MessageBroker interface {
-	//subscribir las funbcines de callback al topic correspondiente
+	//subscribir las funciones de callback al topic correspondiente
 	OnMessage(topic string, callback func(interface{})) error
+	//subscribir las funbcines de callback al topic correspondiente
+	OnGetUsers(topic string, callback func(interface{})) error
+	//subscribir las funbcines de callback al topic correspondiente
+	OnGetMessage(topic string, callback func(interface{})) error
+
 	// Publica un mensaje en un tópico específico.
 	Publish(topic string, message *Message) error
-
+	// Publica un mensaje en un tópico específico.
+	PublishGetUSers(topic string, message *ResponseListUser) error
+	// Publica un mensaje en un tópico específico.
+	PublishGetMessages(topic string, message *ResponseListMessages) error
 	// Se suscribe a un tópico y recibe mensajes, procesándolos mediante el manejador proporcionado.
 	Subscribe(topic string, handler func(message *Message) error) error
 

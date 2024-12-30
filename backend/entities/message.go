@@ -20,16 +20,16 @@ const (
 
 // KafkaMessage represents the structure of a message in Kafka
 type KafkaMessage struct {
-	Key     string            `json:"key"`
-	Value   string            `json:"value"`
-	Headers map[string]string `json:"headers"`
+	Key     string                 `json:"key"`
+	Value   string                 `json:"value"`
+	Headers map[string]interface{} `json:"headers"`
 }
 
 // NatsMessage represents the structure of a message in NATS
 type NatsMessage struct {
-	Subject string            `json:"subject"`
-	Data    []byte            `json:"data"`
-	Headers map[string]string `json:"headers"`
+	Subject string                 `json:"subject"`
+	Data    []byte                 `json:"data"`
+	Headers map[string]interface{} `json:"headers"`
 }
 
 // Clase Mensaje
@@ -63,3 +63,51 @@ type Message struct {
 			de: Alemán.
 			zh: Chino.
 */
+
+// Convertir Priority si está presente
+type RequestLisUsers struct {
+	RoomId      uuid.UUID `json:"roomid"`
+	TokenSesion string    `json:"tokensesion"`
+	Nickname    string    `json:"nickname"`
+	Topic       string    `json:"topic"`
+	X_GoChat    string    `json:"x_gochat"`
+}
+type RequestLisMessages struct {
+	Operation     string    `json:"operation"`
+	LastMessageId uuid.UUID `json:"lastmessageid"`
+	TokenSesion   string    `json:"tokensesion"`
+	Nickname      string    `json:"nickname"`
+	RoomId        uuid.UUID `json:"roomid"`
+	Topic         string    `json:"topic"`
+	X_GoChat      string    `json:"x_gochat"`
+}
+type AliveUsers struct {
+	Nickname       string `json:"nickname"`
+	LastActionTime string `json:"lastactiontime"`
+}
+
+type ResponseListUser struct {
+	Status      string       `json:"status"`
+	Message     string       `json:"message"`
+	TokenSesion string       `json:"tokenSesion,omitempty"`
+	Nickname    string       `json:"nickname,omitempty"`
+	RoomId      uuid.UUID    `json:"roomId,omitempty"`
+	X_GoChat    string       `json:"x_gochat,omitempty"`
+	AliveUsers  []AliveUsers `json:"data,omitempty"`
+}
+type MessageResponse struct {
+	MessageId   uuid.UUID `json:"messageid"`
+	Nickname    string    `json:"nickname"`
+	MessageText string    `json:"messagetext"`
+}
+
+// Estructura para la respuesta
+type ResponseListMessages struct {
+	Status      string            `json:"status"`
+	Message     string            `json:"message"`
+	TokenSesion string            `json:"tokenSesion"`
+	Nickname    string            `json:"nickname"`
+	RoomId      uuid.UUID         `json:"roomid"`
+	X_GoChat    string            `json:"x_gochat"`
+	ListMessage []MessageResponse `json:"data,omitempty"` // Lista de mensajes si existen
+}

@@ -4,8 +4,11 @@ import (
 	"backend/utils"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // KafkaTransformer es un transformador que maneja la conversión de mensajes entre el formato interno de la aplicación y el formato de Kafka.
@@ -15,12 +18,85 @@ type KafkaTransformer struct{}
 func NewKafkaTransformer() *KafkaTransformer {
 	return &KafkaTransformer{}
 }
-func (k *KafkaTransformer) BuildMessage(key, value string, headers map[string]string) *KafkaMessage {
+func (k *KafkaTransformer) BuildMessage(key, value string, headers map[string]interface{}) *KafkaMessage {
 	return &KafkaMessage{
 		Key:     key,
 		Value:   value,
 		Headers: headers,
 	}
+}
+func (k *KafkaTransformer) TransformFromExternalToGetMessage(rawMsg []byte) (*RequestLisMessages, error) {
+	var msg KafkaMessage
+	if err := json.Unmarshal(rawMsg, &msg); err != nil {
+		return nil, err
+	}
+	// Decodificar
+	messageText := string(msg.Value)
+	reqMessage := msg.Headers
+	log.Printf("\nNatsTransformer: TransformFromExternal: messageText:[%s]\n", messageText)
+	// Extraemos el MessageId del header o generamos uno nuevo
+	// Convertir MessageId a uuid.UUID
+	roomId, err := uuid.Parse(reqMessage["roomid"].(string))
+	if err != nil {
+		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear roomid: %v", err)
+	}
+
+	lastmessageid, err := uuid.Parse(reqMessage["lastmessageid"].(string))
+	if err != nil {
+		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear lastmessageid: %v", err)
+	}
+	operation := reqMessage["operation"].(string)
+
+	nickname := reqMessage["nickname"].(string)
+	token := reqMessage["tokensesion"].(string)
+	topic := reqMessage["topic"].(string)
+	X_GoChat := reqMessage["x_gochat"].(string)
+
+	//mensaje interno
+	msgapp := &RequestLisMessages{
+		RoomId:        roomId,
+		TokenSesion:   token, //
+		Nickname:      nickname,
+		Operation:     operation,
+		LastMessageId: lastmessageid,
+		Topic:         topic,
+		X_GoChat:      X_GoChat,
+	}
+	log.Printf("NatsTransformer: TransformFromExternal: msg :%v", msgapp)
+	return msgapp, nil
+}
+
+func (k *KafkaTransformer) TransformFromExternalToGetUsers(rawMsg []byte) (*RequestLisUsers, error) {
+	var msg KafkaMessage
+	if err := json.Unmarshal(rawMsg, &msg); err != nil {
+		return nil, err
+	}
+	// Decodificar
+	messageText := string(msg.Value)
+	reqMessage := msg.Headers
+	log.Printf("\nNatsTransformer: TransformFromExternal: messageText:[%s]\n", messageText)
+	// Extraemos el MessageId del header o generamos uno nuevo
+	// Convertir MessageId a uuid.UUID
+	roomId, err := uuid.Parse(reqMessage["RoomId"].(string))
+	if err != nil {
+		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear RoomId: %v", err)
+	}
+
+	nickname := reqMessage["nickname"].(string)
+	token := reqMessage["tokensesion"].(string)
+	topic := reqMessage["topic"].(string)
+	X_GoChat := reqMessage["x_gochat"].(string)
+
+	//mensaje interno
+	msgapp := &RequestLisUsers{
+		RoomId:      roomId,
+		TokenSesion: token, //
+		Nickname:    nickname,
+		Topic:       topic,
+		X_GoChat:    X_GoChat,
+	}
+	log.Printf("NatsTransformer: TransformFromExternal: msg :%v", msgapp)
+	return msgapp, nil
 }
 
 // TransformFromExternal convierte un mensaje de Kafka (KafkaMessage) a un mensaje interno (Message).
@@ -94,13 +170,13 @@ func (k *KafkaTransformer) TransformFromExternal(rawMsg []byte) (*Message, error
 func (k *KafkaTransformer) TransformToExternal(message *Message) ([]byte, error) {
 	// Crear el objeto KafkaMessage y mapear los valores correspondientes
 	kafkaMsg := KafkaMessage{
-		Key:     message.MessageId.String(), // El Key es el MessageId (UUID como string)
-		Value:   message.MessageText,        // El Value es el MessageText
-		Headers: make(map[string]string),    // Iniciar el mapa de headers
+		Key:     message.MessageId.String(),   // El Key es el MessageId (UUID como string)
+		Value:   message.MessageText,          // El Value es el MessageText
+		Headers: make(map[string]interface{}), // Iniciar el mapa de headers
 	}
 
 	// Mapear los valores adicionales a los headers
-	headers := map[string]string{
+	headers := map[string]interface{}{
 		"MessageId":    message.MessageId.String(),
 		"MessageType":  string(rune(Notification)),
 		"SendDate":     message.SendDate.Format(time.RFC3339),
@@ -127,9 +203,53 @@ func (k *KafkaTransformer) TransformToExternal(message *Message) ([]byte, error)
 	// Retornar el mensaje serializado en formato JSON
 	return rawMsg, nil
 }
-func (k *KafkaTransformer) getHeaderValue(headers map[string]string, key, defaultValue string) string {
+func (k *KafkaTransformer) getHeaderValue(headers map[string]interface{}, key, defaultValue string) string {
 	if value, exists := headers[key]; exists {
-		return value
+		return value.(string)
 	}
 	return defaultValue
+}
+
+// TransformToExternal convierte un mensaje interno (Message) al formato de NATS (NatsMessage).
+func (k *KafkaTransformer) TransformToExternalUsers(message *ResponseListUser) ([]byte, error) {
+	// Crear el objeto NatsMessage y mapear los valores correspondientes
+	kfkMsg := KafkaMessage{
+		Key:     message.RoomId.String(), // El Subject es el RoomName
+		Value:   message.Message,         // El Data es el MessageText
+		Headers: make(map[string]interface{}),
+	}
+
+	// Mapear los valores adicionales a los headers
+	kfkMsg.Headers["AliveUsers"] = message.AliveUsers
+
+	// Serializar el mensaje NATS a JSON
+	rawMsg, err := json.Marshal(kfkMsg)
+	if err != nil {
+		return nil, fmt.Errorf("error al serializar el mensaje de NATS: %v", err)
+	}
+
+	// Retornar el mensaje serializado en formato JSON
+	return rawMsg, nil
+}
+
+// TransformToExternal convierte un mensaje interno (Message) al formato de NATS (NatsMessage).
+func (k *KafkaTransformer) TransformToExternalMessages(message *ResponseListMessages) ([]byte, error) {
+	// Crear el objeto KafkaMessage y mapear los valores correspondientes
+	kfkMsg := KafkaMessage{
+		Key:     message.RoomId.String(), // El Subject es el RoomName
+		Value:   message.Message,         // El Data es el MessageText
+		Headers: make(map[string]interface{}),
+	}
+
+	// Mapear los valores adicionales a los headers
+	kfkMsg.Headers["MessageResponse"] = message.ListMessage
+
+	// Serializar el mensaje NATS a JSON
+	rawMsg, err := json.Marshal(kfkMsg)
+	if err != nil {
+		return nil, fmt.Errorf("error al serializar el mensaje de NATS: %v", err)
+	}
+
+	// Retornar el mensaje serializado en formato JSON
+	return rawMsg, nil
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,34 +17,14 @@ type NatsTransformer struct{}
 func NewNatsTransformer() *NatsTransformer {
 	return &NatsTransformer{}
 }
-func (n *NatsTransformer) BuildMessage(subject, data string, header map[string]string) *NatsMessage {
+func (n *NatsTransformer) BuildMessage(subject, data string, header map[string]interface{}) *NatsMessage {
 	return &NatsMessage{
 		Subject: subject,
 		Data:    []byte(data),
 		Headers: header,
 	}
 }
-
-// TransformFromExternal convierte un mensaje de NATS (NatsMessage) a un mensaje interno (Message).
-/*
-	headers := map[string]string{
-		"MessageId":    msg.MessageId.String(),
-		"MessageType":  string(Notification),
-		"SendDate":     msg.SendDate.Format(time.RFC3339),
-		"ServerDate":   msg.ServerDate.Format(time.RFC3339),
-		"Nickname":     msg.Nickname,
-		"Token":        msg.Token,
-		"RoomID":       msg.RoomID.String(),
-		"RoomName":     msg.RoomName,
-		"AckStatus":    fmt.Sprintf("%t", msg.Metadata.AckStatus),
-		"Priority":     fmt.Sprintf("%d", msg.Metadata.Priority),
-		"OriginalLang": msg.Metadata.OriginalLang,
-	}
-
-*/
-func (n *NatsTransformer) TransformFromExternal(rawMsg []byte) (*Message, error) {
-	// Parsear el mensaje de NATS (rawMsg) a NatsMessage
-
+func (n *NatsTransformer) TransformFromExternalToGetMessage(rawMsg []byte) (*RequestLisMessages, error) {
 	var msg NatsMessage
 	if err := json.Unmarshal(rawMsg, &msg); err != nil {
 		return nil, err
@@ -56,74 +35,108 @@ func (n *NatsTransformer) TransformFromExternal(rawMsg []byte) (*Message, error)
 	log.Printf("\nNatsTransformer: TransformFromExternal: messageText:[%s]\n", messageText)
 	// Extraemos el MessageId del header o generamos uno nuevo
 	// Convertir MessageId a uuid.UUID
-	messageId, err := uuid.Parse(reqMessage["MessageId"])
+	roomId, err := uuid.Parse(reqMessage["roomid"].(string))
 	if err != nil {
-		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear MessageId: %v", err)
-	}
-	messageType_h := int(reqMessage["MessageType"][0])
-
-	// Convertir MessageType (puedes definir tu tipo MessageType según tu necesidad)
-	messageType := MessageType(messageType_h)
-
-	// Convertir SendDate y ServerDate a time.Time
-	log.Printf("\nNatsTransformer: TransformFromExternal:  SendDate :[%s]\n", reqMessage["SendDate"])
-	sendDate, err := utils.ConvertToRFC3339(reqMessage["SendDate"])
-	if err != nil {
-		return nil, fmt.Errorf("error al parsear SendDate: %v", err)
+		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear roomid: %v", err)
 	}
 
-	serverDate, err := time.Parse(time.RFC3339, reqMessage["ServerDate"])
+	lastmessageid, err := uuid.Parse(reqMessage["lastmessageid"].(string))
 	if err != nil {
-		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear ServerDate: %v", err)
+		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear lastmessageid: %v", err)
 	}
+	operation := reqMessage["operation"].(string)
 
-	// Asignar Nickname, Token, RoomName, y OriginalLang
-	nickname := reqMessage["Nickname"]
-	token := reqMessage["Token"]
-	roomName := reqMessage["RoomName"]
-	originalLang := reqMessage["OriginalLang"]
-
-	// Convertir RoomID a uuid.UUID
-	roomID, err := uuid.Parse(reqMessage["RoomID"])
-	if err != nil {
-		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear RoomID: %v", err)
-	}
-
-	// Convertir AckStatus a bool
-	ackStatus, err := strconv.ParseBool(reqMessage["AckStatus"])
-	if err != nil {
-		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear AckStatus: %v", err)
-	}
-
-	// Convertir Priority a int
-	log.Printf("\nNatsTransformer: TransformFromExternal: reqMessage[ Priority ]: [%s]\n", reqMessage["Priority"])
-	priority, err := strconv.Atoi(reqMessage["Priority"])
-	if err != nil {
-		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal:error al parsear Priority: %v", err)
-	}
-
-	// Convertir Priority si está presente
+	nickname := reqMessage["nickname"].(string)
+	token := reqMessage["tokensesion"].(string)
+	topic := reqMessage["topic"].(string)
+	X_GoChat := reqMessage["x_gochat"].(string)
 
 	//mensaje interno
-	msgapp := &Message{
-		MessageId:   messageId,
-		MessageType: messageType, // Puedes ajustar esto dependiendo del tipo de mensaje que recibas
-		MessageText: messageText, // El cuerpo del mensaje
-		RoomID:      roomID,      // Este valor se puede generar aquí o extraer de los headers si está disponible
-		RoomName:    roomName,    // El nombre del room
-		Nickname:    nickname,    // Nickname desde los headers
-		SendDate:    sendDate,    // Fecha de envío
-		Token:       token,       // Token desde los headers
-
-		ServerDate: serverDate, // Fecha de servidor actual
-		Metadata: Metadata{
-			Priority:     priority,     // Asignamos la prioridad desde los headers
-			OriginalLang: originalLang, // Asignamos el idioma original desde los headers
-			AckStatus:    ackStatus,    // Status de confirmación
-		},
+	msgapp := &RequestLisMessages{
+		RoomId:        roomId,
+		TokenSesion:   token, //
+		Nickname:      nickname,
+		Operation:     operation,
+		LastMessageId: lastmessageid,
+		Topic:         topic,
+		X_GoChat:      X_GoChat,
 	}
 	log.Printf("NatsTransformer: TransformFromExternal: msg :%v", msgapp)
 	return msgapp, nil
+}
+
+func (n *NatsTransformer) TransformFromExternalToGetUsers(rawMsg []byte) (*RequestLisUsers, error) {
+	var msg NatsMessage
+	if err := json.Unmarshal(rawMsg, &msg); err != nil {
+		return nil, err
+	}
+	// Decodificar
+	messageText := string(msg.Data)
+	reqMessage := msg.Headers
+	log.Printf("\nNatsTransformer: TransformFromExternal: messageText:[%s]\n", messageText)
+	// Extraemos el MessageId del header o generamos uno nuevo
+	// Convertir MessageId a uuid.UUID
+	roomId, err := uuid.Parse(reqMessage["RoomId"].(string))
+	if err != nil {
+		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear RoomId: %v", err)
+	}
+
+	nickname := reqMessage["nickname"].(string)
+	token := reqMessage["tokensesion"].(string)
+	topic := reqMessage["topic"].(string)
+	X_GoChat := reqMessage["x_gochat"].(string)
+
+	//mensaje interno
+	msgapp := &RequestLisUsers{
+		RoomId:      roomId,
+		TokenSesion: token, //
+		Nickname:    nickname,
+		Topic:       topic,
+		X_GoChat:    X_GoChat,
+	}
+	log.Printf("NatsTransformer: TransformFromExternal: msg :%v", msgapp)
+	return msgapp, nil
+}
+
+// TransformFromExternal convierte un mensaje de NATS (NatsMessage) a un mensaje interno (Message).
+func (n *NatsTransformer) TransformFromExternal(rawMsg []byte) (*Message, error) {
+	// Parsear el mensaje de NATS (rawMsg) a NatsMessage
+	var natsMsg NatsMessage
+	if err := json.Unmarshal(rawMsg, &natsMsg); err != nil {
+		return nil, err
+	}
+
+	// Extraemos el MessageId del header o generamos uno nuevo
+	messageID := natsMsg.Headers["MessageId"].(string)
+	if messageID == "" {
+		messageID = uuid.New().String() // Si no hay MessageId, generamos uno nuevo
+	}
+	messageUUID := utils.ParseUUID(messageID) // Utilizamos la función ParseUUID para convertir el string a UUID
+
+	// Extraemos otros valores de los headers
+	nickname := natsMsg.Headers["Nickname"].(string) // Nickname desde los headers
+	roomName := natsMsg.Subject                      // Subject es el RoomName
+	priorityStr := natsMsg.Headers["Priority"].(string)
+	originalLang := natsMsg.Headers["OriginalLang"].(string)
+
+	// Convertir Priority si está presente
+	priority := utils.ParseInt(priorityStr)
+	//mensaje interno
+	msg := Message{
+		MessageId:   messageUUID,
+		MessageType: Text,                 // Puedes ajustar esto dependiendo del tipo de mensaje que recibas
+		MessageText: string(natsMsg.Data), // El cuerpo del mensaje
+		RoomID:      uuid.New(),           // Este valor se puede generar aquí o extraer de los headers si está disponible
+		RoomName:    roomName,             // Usamos el Subject como RoomName
+		Nickname:    nickname,             // Nickname desde los headers
+		SendDate:    time.Now(),           // Fecha de envío actual
+		Metadata: Metadata{
+			Priority:     priority,     // Asignamos la prioridad desde los headers
+			OriginalLang: originalLang, // Asignamos el idioma original desde los headers
+		},
+	}
+
+	return &msg, nil
 }
 
 // TransformToExternal convierte un mensaje interno (Message) al formato de NATS (NatsMessage).
@@ -132,28 +145,59 @@ func (n *NatsTransformer) TransformToExternal(message *Message) ([]byte, error) 
 	natsMsg := NatsMessage{
 		Subject: message.RoomName,            // El Subject es el RoomName
 		Data:    []byte(message.MessageText), // El Data es el MessageText
-		Headers: make(map[string]string),
+		Headers: make(map[string]interface{}),
 	}
 
 	// Mapear los valores adicionales a los headers
+	natsMsg.Headers["MessageId"] = message.MessageId.String()                  // MessageId como UUID
+	natsMsg.Headers["Nickname"] = message.Nickname                             // Nickname desde el mensaje
+	natsMsg.Headers["Priority"] = fmt.Sprintf("%d", message.Metadata.Priority) // Priority como string
+	natsMsg.Headers["OriginalLang"] = message.Metadata.OriginalLang            // OriginalLang desde el mensaje
+	natsMsg.Headers["SendDate"] = message.SendDate.Format(time.RFC3339)        // Fecha de envío en formato RFC3339
 
-	headers := map[string]string{
-		"MessageId":    message.MessageId.String(),
-		"MessageType":  string(rune(Notification)),
-		"SendDate":     message.SendDate.Format(time.RFC3339),
-		"ServerDate":   message.ServerDate.Format(time.RFC3339),
-		"Nickname":     message.Nickname,
-		"Token":        message.Token,
-		"RoomID":       message.RoomID.String(),
-		"RoomName":     message.RoomName,
-		"AckStatus":    fmt.Sprintf("%t", message.Metadata.AckStatus),
-		"Priority":     fmt.Sprintf("%d", message.Metadata.Priority),
-		"OriginalLang": message.Metadata.OriginalLang,
+	// Serializar el mensaje NATS a JSON
+	rawMsg, err := json.Marshal(natsMsg)
+	if err != nil {
+		return nil, fmt.Errorf("error al serializar el mensaje de NATS: %v", err)
 	}
 
-	natsMsg.Headers = headers
-	// Si tienes más campos en Message que necesitas incluir en el header, agrégalos aquí
-	// Ejemplo: natsMsg.Header["OtroCampo"] = message.OtroCampo
+	// Retornar el mensaje serializado en formato JSON
+	return rawMsg, nil
+}
+
+// TransformToExternal convierte un mensaje interno (Message) al formato de NATS (NatsMessage).
+func (n *NatsTransformer) TransformToExternalUsers(message *ResponseListUser) ([]byte, error) {
+	// Crear el objeto NatsMessage y mapear los valores correspondientes
+	natsMsg := NatsMessage{
+		Subject: message.RoomId.String(), // El Subject es el RoomName
+		Data:    []byte(message.Message), // El Data es el MessageText
+		Headers: make(map[string]interface{}),
+	}
+
+	// Mapear los valores adicionales a los headers
+	natsMsg.Headers["AliveUsers"] = message.AliveUsers
+
+	// Serializar el mensaje NATS a JSON
+	rawMsg, err := json.Marshal(natsMsg)
+	if err != nil {
+		return nil, fmt.Errorf("error al serializar el mensaje de NATS: %v", err)
+	}
+
+	// Retornar el mensaje serializado en formato JSON
+	return rawMsg, nil
+}
+
+// TransformToExternal convierte un mensaje interno (Message) al formato de NATS (NatsMessage).
+func (n *NatsTransformer) TransformToExternalMessages(message *ResponseListMessages) ([]byte, error) {
+	// Crear el objeto NatsMessage y mapear los valores correspondientes
+	natsMsg := NatsMessage{
+		Subject: message.RoomId.String(), // El Subject es el RoomName
+		Data:    []byte(message.Message), // El Data es el MessageText
+		Headers: make(map[string]interface{}),
+	}
+
+	// Mapear los valores adicionales a los headers
+	natsMsg.Headers["MessageResponse"] = message.ListMessage
 
 	// Serializar el mensaje NATS a JSON
 	rawMsg, err := json.Marshal(natsMsg)

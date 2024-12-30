@@ -108,6 +108,62 @@ func (b *BrokerNats) OnMessage(topic string, callback func(interface{})) error {
 	return err
 }
 
+func (b *BrokerNats) OnGetUsers(topic string, callback func(interface{})) error {
+	// Suscripción al topic
+	_, err := b.conn.Subscribe(topic, func(m *nats.Msg) {
+
+		// Construir el mensaje NATS personalizado
+		log.Printf("BrokerNats: OnGetUsers:  m.Subject: %s \n", m.Subject)
+		natsMsg := &NatsMessage{
+			Subject: m.Subject,
+			Data:    m.Data,
+		}
+		log.Printf("BrokerNats: OnGetUsers:  natsMsg.Subject: %s \n", natsMsg.Subject)
+		log.Printf("BrokerNats: OnGetUsers:  natsMsg.Data: %s \n", natsMsg.Data)
+
+		message, err := b.adapter.TransformFromExternalToGetUsers(natsMsg.Data)
+
+		if err != nil {
+			// Manejar el error si es necesario
+			fmt.Println("Error transformando el mensaje:", err)
+			return
+		}
+		log.Printf("BrokerNats: OnGetUsers:  message: %v\n", message)
+		// Llamar al callback con el mensaje deserializado
+		callback(message)
+	})
+
+	return err
+}
+
+func (b *BrokerNats) OnGetMessage(topic string, callback func(interface{})) error {
+	// Suscripción al topic
+	_, err := b.conn.Subscribe(topic, func(m *nats.Msg) {
+
+		// Construir el mensaje NATS personalizado
+		log.Printf("BrokerNats: OnMessage:  m.Subject: %s \n", m.Subject)
+		natsMsg := &NatsMessage{
+			Subject: m.Subject,
+			Data:    m.Data,
+		}
+		log.Printf("BrokerNats: OnMessage:  natsMsg.Subject: %s \n", natsMsg.Subject)
+		log.Printf("BrokerNats: OnMessage:  natsMsg.Data: %s \n", natsMsg.Data)
+
+		message, err := b.adapter.TransformFromExternal(natsMsg.Data)
+
+		if err != nil {
+			// Manejar el error si es necesario
+			fmt.Println("Error transformando el mensaje:", err)
+			return
+		}
+		log.Printf("BrokerNats: OnMessage:  message: %v\n", message)
+		// Llamar al callback con el mensaje deserializado
+		callback(message)
+	})
+
+	return err
+}
+
 // GetMessagesFromId obtiene mensajes desde un MessageId específico en JetStream.
 func (b *BrokerNats) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Message, error) {
 	// Construye el subject con el formato adecuado (por ejemplo, "chat.<roomId>").
@@ -169,6 +225,46 @@ func (b *BrokerNats) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Mes
 func (b *BrokerNats) Publish(topic string, message *Message) error {
 	// Transforma el mensaje a su formato externo.
 	msgData, err := b.adapter.TransformToExternal(message)
+	if err != nil {
+		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s", err)
+		return err
+	}
+
+	// Publica el mensaje usando JetStream.
+	ack, err := b.js.Publish(topic, msgData)
+	if err != nil {
+		log.Printf("BrokerNats: Publish: Error al publicar mensaje en JetStream: %s", err)
+		return err
+	}
+
+	log.Printf("BrokerNats: Publish: Mensaje publicado en JetStream. Stream: %s, Secuencia: %d", ack.Stream, ack.Sequence)
+	return nil
+}
+
+// Publica un mensaje en un tópico específico.
+func (b *BrokerNats) PublishGetUSers(topic string, message *ResponseListUser) error {
+	// Transforma el mensaje a su formato externo.
+	msgData, err := b.adapter.TransformToExternalUsers(message)
+	if err != nil {
+		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s", err)
+		return err
+	}
+
+	// Publica el mensaje usando JetStream.
+	ack, err := b.js.Publish(topic, msgData)
+	if err != nil {
+		log.Printf("BrokerNats: Publish: Error al publicar mensaje en JetStream: %s", err)
+		return err
+	}
+
+	log.Printf("BrokerNats: Publish: Mensaje publicado en JetStream. Stream: %s, Secuencia: %d", ack.Stream, ack.Sequence)
+	return nil
+}
+
+// Publica un mensaje en un tópico específico.
+func (b *BrokerNats) PublishGetMessages(topic string, message *ResponseListMessages) error {
+	// Transforma el mensaje a su formato externo.
+	msgData, err := b.adapter.TransformToExternalMessages(message)
 	if err != nil {
 		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s", err)
 		return err
