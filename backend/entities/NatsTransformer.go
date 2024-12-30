@@ -115,21 +115,32 @@ func (n *NatsTransformer) TransformFromExternal(rawMsg []byte) (*Message, error)
 
 	// Extraemos otros valores de los headers
 	nickname := natsMsg.Headers["Nickname"].(string) // Nickname desde los headers
+	token := natsMsg.Headers["Token"].(string)       // Token de sesión de usuario, si no existe en la petición no puede jececutar ninguna operación
 	roomName := natsMsg.Subject                      // Subject es el RoomName
 	priorityStr := natsMsg.Headers["Priority"].(string)
 	originalLang := natsMsg.Headers["OriginalLang"].(string)
-
+	roomId, err := uuid.Parse(natsMsg.Headers["RoomID"].(string))
+	if err != nil {
+		return nil, fmt.Errorf("NatsTransformer: TransformFromExternal: error al parsear roomid: %v", err)
+	}
+	sendDateT, err := utils.ConvertToRFC3339(natsMsg.Headers["SendDate"].(string))
+	if err != nil {
+		fmt.Println("Error al convertir la fecha:", err)
+		sendDateT = time.Now()
+	}
 	// Convertir Priority si está presente
 	priority := utils.ParseInt(priorityStr)
 	//mensaje interno
 	msg := Message{
 		MessageId:   messageUUID,
 		MessageType: Text,                 // Puedes ajustar esto dependiendo del tipo de mensaje que recibas
+		Token:       token,                // Token de sesión de usuario, si no existe en la petición no puede jececutar ninguna operación
 		MessageText: string(natsMsg.Data), // El cuerpo del mensaje
-		RoomID:      uuid.New(),           // Este valor se puede generar aquí o extraer de los headers si está disponible
+		RoomID:      roomId,               // Este valor se puede generar aquí o extraer de los headers si está disponible
 		RoomName:    roomName,             // Usamos el Subject como RoomName
 		Nickname:    nickname,             // Nickname desde los headers
-		SendDate:    time.Now(),           // Fecha de envío actual
+		SendDate:    sendDateT,            // Fecha de envío actual
+		ServerDate:  time.Now(),
 		Metadata: Metadata{
 			Priority:     priority,     // Asignamos la prioridad desde los headers
 			OriginalLang: originalLang, // Asignamos el idioma original desde los headers

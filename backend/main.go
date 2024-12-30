@@ -32,9 +32,13 @@ func main() {
 	log.SetFlags(log.Lshortfile)
 	utils.LoadEnvironmentVariables()
 
-	filter := &FilteredWriter{
+	/*
 		allowedClasses: []string{"Main", "BrokerNats", "NatsTransformer", "RoomManagement", "NewMessageHandler",
-			"ChatServerModule", "LocalRoom", "RoomManagement", "UserManagement", "HandleNewMessages"},
+		"ChatServerModule", "LocalRoom",  "UserManagement", "HandleNewMessages","HandleGetUsersMessage"},
+	*/
+	filter := &FilteredWriter{
+		allowedClasses: []string{"Main", "BrokerNats", "NatsTransformer",
+			"ChatServerModule", "LocalRoom", "HandleNewMessages", "HandleGetUsersMessage"},
 		writer: io.Discard, // Initially don't log anywhere
 	}
 

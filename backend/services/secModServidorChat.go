@@ -152,11 +152,14 @@ func (chatModule *ChatServerModule) ExecuteSendMessage(msg *entities.Message) er
 		log.Println("ChatServerModule: ExecuteSendMessage: Invalid token or action not allowed")
 		return errors.New("ChatServerModule: ExecuteSendMessage: CODM01: invalid token or action not allowed")
 	}
+	log.Printf("ChatServerModule: ExecuteSendMessage: token_user [%s]  \n", token_user)
+	log.Printf("ChatServerModule: ExecuteSendMessage: token [%s]  \n", token)
 
 	if token_user != token {
 		log.Println("ChatServerModule: ExecuteSendMessage: Token mismatch")
 		return errors.New("ChatServerModule: ExecuteSendMessage: CODM02: invalid token or action not allowed")
 	}
+
 	user, err := chatModule.UserManagement.FindUserByToken(token_user)
 	if err != nil {
 		log.Printf("ChatServerModule: ExecuteSendMessage: CODM03: Error finding user by token: %v\n", err)

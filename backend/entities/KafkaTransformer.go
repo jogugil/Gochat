@@ -154,8 +154,7 @@ func (k *KafkaTransformer) TransformFromExternal(rawMsg []byte) (*Message, error
 		Nickname:    nickname,                      // Nickname desde los headers
 		SendDate:    sendDateT,                     // Fecha de envío
 		Token:       token,                         // Token desde los headers
-
-		ServerDate: time.Now(), // Fecha del servidor actual
+		ServerDate:  time.Now(),                    // Fecha del servidor actual
 		Metadata: Metadata{
 			Priority:     priorityInt,  // Asignamos la prioridad desde los headers
 			OriginalLang: originalLang, // Asignamos el idioma original desde los headers

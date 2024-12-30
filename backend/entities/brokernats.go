@@ -47,11 +47,7 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: 'urls' no es una lista válida")
 	}
 
-	// Asumimos que la primera URL de la lista es la que queremos usar
-	if len(urls) == 0 {
-		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: no se proporcionaron URLs para el broker NATS")
-	}
-
+	// Conectar a NATS
 	url, ok := urls[0].(string)
 	if !ok {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: la URL proporcionada no es una cadena válida")
@@ -70,6 +66,37 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al inicializar JetStream: %w", err)
 	}
 
+	// Obtener todos los topics
+	topics, err := getTopics(config)
+	if err != nil {
+		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al obtener los topics: %w", err)
+	}
+
+	// Crear el stream con todos los topics
+	err = createStream(js, topics)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// Crear consumidores y productores para cada topic
+	var consumerName = "main-client-consumer"
+	var streamName = "MYGOCHAT_STREAM"
+	for _, topic := range topics {
+		// Publicar un mensaje vacío por ahora
+		err := createProducer(js, topic, []byte{})
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("BrokerNats: error al crear el productor para el tópico %s: %w", topic, err)
+		}
+
+		err = createConsumer(js, streamName, consumerName, topic)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("BrokerNats: error al crear el consumidor para el tópico %s: %w", topic, err)
+		}
+	}
+
 	// Retornar instancia del broker
 	return &BrokerNats{
 		conn:    conn,
@@ -80,6 +107,196 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 	}, nil
 }
 
+// Crear un consumidor para un tópico específico
+func createConsumer(js nats.JetStreamContext, streamName, consumerName, subject string) error {
+	// Crear el consumidor con los parámetros proporcionados
+	_, err := js.AddConsumer(streamName, &nats.ConsumerConfig{
+		Durable:        consumerName,
+		DeliverSubject: subject, // El nombre del topic
+		AckPolicy:      nats.AckExplicitPolicy,
+	})
+	if err != nil {
+		return fmt.Errorf("error al crear el consumidor: %w", err)
+	}
+
+	log.Printf("Consumidor '%s' creado exitosamente para el stream '%s' con subject '%s'", consumerName, streamName, subject)
+	return nil
+}
+
+// Crear un productor para un tópico específico
+func createProducer(js nats.JetStreamContext, topic string, message []byte) error {
+	// Publicar un mensaje en el tópico
+	_, err := js.Publish(topic, message)
+	if err != nil {
+		return fmt.Errorf("BrokerNats: createProducer: error al publicar en el tópico '%s': %w", topic, err)
+	}
+	return nil
+}
+
+func deleteConflictingStreams(js nats.JetStreamContext, topics []string) error {
+	streams := js.StreamNames()
+	if streams == nil {
+		return fmt.Errorf("error al obtener los nombres de los streams: %v", streams)
+	}
+
+	for stream := range streams {
+		info, err := js.StreamInfo(stream)
+		if err != nil {
+			log.Printf("No se pudo obtener información del stream %s: %v", stream, err)
+			continue
+		}
+
+		for _, subject := range info.Config.Subjects {
+			for _, topic := range topics {
+				if subject == topic {
+					log.Printf("Eliminando stream conflictivo: %s (Subjects: %v)", stream, info.Config.Subjects)
+					if err := js.DeleteStream(stream); err != nil {
+						return fmt.Errorf("error al eliminar el stream %s: %w", stream, err)
+					}
+					break
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func listStreams(js nats.JetStreamContext) {
+	streams := js.StreamNames()
+	if streams == nil {
+		log.Fatalf("BrokerNats: listStreams: Error al obtener los nombres de los streams: %v", streams)
+	}
+
+	log.Println("BrokerNats: listStreams: Streams existentes en JetStream:")
+	for stream := range streams {
+		info, err := js.StreamInfo(stream)
+		if err != nil {
+			log.Printf("BrokerNats: listStreams: Error al obtener información del stream %s: %v", stream, err)
+			continue
+		}
+
+		log.Printf("BrokerNats: listStreams: Stream: %s, Subjects: %v", info.Config.Name, info.Config.Subjects)
+	}
+}
+func checkTopicConflicts(js nats.JetStreamContext, topics []string) ([]string, error) {
+	conflictingStreams := []string{}
+
+	// Obtener los nombres de todos los streams
+	streamNames := js.StreamNames()
+	if streamNames == nil {
+		return nil, fmt.Errorf("error al obtener los nombres de los streams")
+	}
+
+	// Verificar cada stream
+	for streamName := range streamNames {
+		info, err := js.StreamInfo(streamName)
+		if err != nil {
+			log.Printf("No se pudo obtener información del stream %s: %v", streamName, err)
+			continue
+		}
+
+		// Comparar los subjects del stream con los topics
+		for _, subject := range info.Config.Subjects {
+			for _, topic := range topics {
+				if subject == topic {
+					log.Printf("Conflicto encontrado: Topic '%s' ya está en el stream '%s'", topic, streamName)
+					conflictingStreams = append(conflictingStreams, streamName)
+				}
+			}
+		}
+	}
+	return conflictingStreams, nil
+}
+
+// Crear el stream con todos los topics. si existe, lo actualizamos
+// Crear el stream con todos los topics
+func createStream(js nats.JetStreamContext, topics []string) error {
+	// Verificar conflictos de topics
+	conflictingStreams, err := checkTopicConflicts(js, topics)
+	if err != nil {
+		return fmt.Errorf("BrokerNats: createStream: error al verificar conflictos de topics: %w", err)
+	}
+
+	// Manejar los conflictos (opcional: eliminar streams conflictivos)
+	if len(conflictingStreams) > 0 {
+		log.Printf("BrokerNats: createStream: conflictos encontrados en streams: %v", conflictingStreams)
+		// Aquí puedes decidir eliminar los streams conflictivos
+		for _, stream := range conflictingStreams {
+			err := js.DeleteStream(stream)
+			if err != nil {
+				return fmt.Errorf("BrokerNats: createStream: error al eliminar stream conflictivo %s: %w", stream, err)
+			}
+			log.Printf("Stream conflictivo eliminado: %s", stream)
+		}
+	}
+
+	// Crear el stream después de resolver conflictos
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "MYGOCHAT_STREAM",
+		Subjects: topics,
+		Storage:  nats.FileStorage,
+		Replicas: 1,
+	})
+	if err != nil {
+		return fmt.Errorf("BrokerNats: createStream: error al crear el stream: %w", err)
+	}
+
+	log.Println("BrokerNats: createStream: stream creado exitosamente")
+	return nil
+}
+
+// Función para obtener todos los topics a partir de la configuración
+func getTopics(config map[string]interface{}) ([]string, error) {
+	var topics []string
+
+	// Extraer los topics de "mainroom" y "operations"
+	goChatConfig, ok := config["gochat"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("BrokerNats: getTopics: 'gochat' no es un mapa válido")
+	}
+
+	mainroomConfig, ok := goChatConfig["mainroom"].(map[string]interface{})
+	if ok {
+		// Agregar topics de mainroom
+		if serverTopic, ok := mainroomConfig["server_topic"].(string); ok {
+			topics = append(topics, serverTopic)
+		}
+		if clientTopic, ok := mainroomConfig["client_topic"].(string); ok {
+			topics = append(topics, clientTopic)
+		}
+	}
+
+	operationsConfig, ok := goChatConfig["operations"].(map[string]interface{})
+	if ok {
+		// Agregar topics de operations
+		if getUsersTopic, ok := operationsConfig["get_users"].(string); ok {
+			topics = append(topics, getUsersTopic)
+		}
+		if getMessagesTopic, ok := operationsConfig["get_messages"].(string); ok {
+			topics = append(topics, getMessagesTopic)
+		}
+	}
+
+	// Extraer los topics de las salas
+	salasConfig, ok := config["salas"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("BrokerNats: getTopics: 'salas' no es un array válido")
+	}
+
+	for _, sala := range salasConfig {
+		salaConfig, ok := sala.(map[string]interface{})
+		if ok {
+			if serverTopic, ok := salaConfig["server_topic"].(string); ok {
+				topics = append(topics, serverTopic)
+			}
+			if clientTopic, ok := salaConfig["client_topic"].(string); ok {
+				topics = append(topics, clientTopic)
+			}
+		}
+	}
+
+	return topics, nil
+}
 func (b *BrokerNats) OnMessage(topic string, callback func(interface{})) error {
 	// Suscripción al topic
 	_, err := b.conn.Subscribe(topic, func(m *nats.Msg) {
@@ -229,10 +446,11 @@ func (b *BrokerNats) Publish(topic string, message *Message) error {
 		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s", err)
 		return err
 	}
-
+	log.Printf("BrokerNats: Publish: topic [%s] --- msgData:[%v]", topic, msgData)
 	// Publica el mensaje usando JetStream.
 	ack, err := b.js.Publish(topic, msgData)
 	if err != nil {
+		log.Printf("BrokerNats: Publish: topic [%s] --- msgData:[%v]", topic, msgData)
 		log.Printf("BrokerNats: Publish: Error al publicar mensaje en JetStream: %s", err)
 		return err
 	}
@@ -283,39 +501,36 @@ func (b *BrokerNats) PublishGetMessages(topic string, message *ResponseListMessa
 
 // Subscribe se suscribe a un tópico y procesa mensajes utilizando JetStream.
 func (b *BrokerNats) Subscribe(topic string, handler func(message *Message) error) error {
-	// Crea una suscripción Pull basada en JetStream.
 	sub, err := b.js.PullSubscribe(topic, "durable-consumer")
 	if err != nil {
-		log.Printf("BrokerNats: Subscribe: Error al crear suscripción JetStream: %s", err)
+		log.Printf("error al crear suscripción: %s", err)
 		return err
 	}
 
-	// Procesa mensajes en un loop (puedes mover esto a un goroutine si lo deseas).
+	// Procesar los mensajes en un goroutine
 	go func() {
 		for {
-			// Fetch obtiene mensajes en bloque (por ejemplo, de 10 en 10).
-			messages, err := sub.Fetch(10) // Ajusta el número según tu caso de uso.
+			messages, err := sub.Fetch(10) // Configura la cantidad de mensajes que se obtendrán
 			if err != nil {
-				log.Printf("BrokerNats: Subscribe: Error al recuperar mensajes: %s", err)
+				log.Printf("error al recuperar mensajes: %s", err)
 				continue
 			}
 
 			for _, msg := range messages {
-				// Transforma el mensaje al formato de la aplicación.
 				msgApp, err := b.adapter.TransformFromExternal(msg.Data)
 				if err != nil {
-					log.Printf("BrokerNats: Subscribe: Error al transformar mensaje: %s", err)
-					msg.Nak() // Marca el mensaje como no procesado.
+					log.Printf("error al transformar el mensaje: %s", err)
+					msg.Nak()
 					continue
 				}
 
-				// Procesa el mensaje con el handler proporcionando el puntero.
+				// Procesar el mensaje
 				if err := handler(msgApp); err != nil {
-					log.Printf("BrokerNats: Subscribe: Error al procesar el mensaje: %s", err)
-					msg.Nak() // Marca el mensaje como no procesado.
+					log.Printf("error al procesar el mensaje: %s", err)
+					msg.Nak()
 				} else {
-					log.Printf("BrokerNats: Subscribe: Mensaje procesado con éxito.")
-					msg.Ack() // Marca el mensaje como procesado.
+					log.Printf("mensaje procesado con éxito")
+					msg.Ack()
 				}
 			}
 		}

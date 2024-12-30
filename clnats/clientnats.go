@@ -281,12 +281,13 @@ func obtenerUsuarios(nc *nats.Conn, nickname, idsala, token string) (ResponseUse
 		X_GoChat:    "http://localhost:8081",
 	}
 
+	fmt.Println(" Dentos de obtenerUsuarios")
 	// Convertir el mensaje a JSON
 	jsonData, err := json.Marshal(requestData)
 	if err != nil {
 		return ResponseUser{}, fmt.Errorf("error al convertir a JSON: %v", err)
 	}
-
+	fmt.Printf(" obtenerUsuarios: requestData : [%v]\n", requestData)
 	// Canal para manejar la respuesta
 	responseChannel := make(chan *nats.Msg, 1)
 
@@ -315,6 +316,7 @@ func obtenerUsuarios(nc *nats.Conn, nickname, idsala, token string) (ResponseUse
 	case <-time.After(5 * time.Second): // Timeout de 5 segundos
 		return ResponseUser{}, fmt.Errorf("timeout al esperar la respuesta")
 	}
+	fmt.Printf(" obtenerUsuarios: response : [%v]\n", response)
 
 	return response, nil
 }
@@ -333,6 +335,7 @@ func main() {
 		// Conectar a NATS y enviar/recibir mensajes
 		nc := connectToNATS(loginResp.Token, loginResp.Roomid, loginResp.Roomname, loginResp.Nickname)
 		if nc != nil {
+			fmt.Println("Voy a obtener a los usuarios activos")
 			//Petcion de usuarios
 			obtenerUsuarios(nc, loginResp.Nickname, loginResp.Roomid, loginResp.Token)
 		}

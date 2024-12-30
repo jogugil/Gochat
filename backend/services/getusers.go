@@ -28,22 +28,22 @@ func HandleGetUsersMessage(msg interface{}) {
 	// Validate if the user is authorized to send the message
 	token_user, err := secMod.UserManagement.GetUserToken(nickname)
 	if err != nil {
-		log.Println("ChatServerModule: ExecuteSendMessage: Invalid token or action not allowed")
+		log.Println("HandleGetUsersMessage: Invalid token or action not allowed")
 		return
 	}
 
 	if !secMod.ValidateTokenAction(token_user, nickname, "sendMessage") {
-		log.Println("ChatServerModule: ExecuteSendMessage: Invalid token or action not allowed")
+		log.Println("HandleGetUsersMessage: Invalid token or action not allowed")
 		return
 	}
 
 	if token_user != token {
-		log.Println("ChatServerModule: ExecuteSendMessage: Token mismatch")
+		log.Println("HandleGetUsersMessage: Token mismatch")
 		return
 	}
 	_, err = secMod.UserManagement.FindUserByToken(token_user)
 	if err != nil {
-		log.Printf("ChatServerModule: ExecuteSendMessage: CODM03: Error finding user by token: %v\n", err)
+		log.Printf("HandleGetUsersMessage: CODM03: Error finding user by token: %v\n", err)
 		return
 	}
 
@@ -55,9 +55,9 @@ func HandleGetUsersMessage(msg interface{}) {
 
 		return
 	}
-
-	if err != nil {
-		sendErrorResponse(secMod, requestData.Topic, "Servicio no disponible.", requestData.X_GoChat)
+	xGoChat := requestData.X_GoChat
+	if xGoChat == "" {
+		sendErrorResponse(secMod, requestData.Topic, "El campo x-gochat no existe.", "")
 		return
 	}
 
@@ -104,6 +104,6 @@ func sendErrorResponse(secMod *ChatServerModule, topic, message, xGoChat string)
 
 	err := secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetUSers(topic, &responseE)
 	if err != nil {
-		log.Printf("sendErrorResponse: Error al publicar la respuesta de error: %v", err)
+		log.Printf("HandleGetUsersMessage: sendErrorResponse: Error al publicar la respuesta de error: %v", err)
 	}
 }

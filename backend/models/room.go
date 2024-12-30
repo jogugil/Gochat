@@ -19,41 +19,41 @@ func (room *LocalRoom) AddUser(user entities.User) {
 	// Key operation: Add the user to the list
 	room.Room.Users = append(room.Room.Users, user)
 
-	log.Printf("LocalRoom:AddUser: User %v added successfully to room %s\n", user, room.Room.RoomName)
+	log.Printf("LocalRoom:AddUser: User [%v] added successfully to room [%s]\n", user, room.Room.RoomName)
 }
 
 func (room *LocalRoom) RemoveUser(user entities.User) {
-	log.Printf("LocalRoom:RemoveUser: Removing user %v from room %s\n", user, room.Room.RoomName)
+	log.Printf("LocalRoom:RemoveUser: Removing user [%v] from room [%s]\n", user, room.Room.RoomName)
 
 	// Iterate through the list of users
 	for i, u := range room.Room.Users {
 		// If the user is found, remove them from the list
 		if u == user {
-			log.Printf("LocalRoom:RemoveUser: User %v found at position %d\n", user, i)
+			log.Printf("LocalRoom:RemoveUser: User [%v] found at position [%d]\n", user, i)
 
 			// Key operation: Remove the user while keeping the others
 			room.Room.Users = append(room.Room.Users[:i], room.Room.Users[i+1:]...)
 
-			log.Printf("LocalRoom:RemoveUser: User %v removed successfully from room %s\n", user, room.Room.RoomName)
+			log.Printf("LocalRoom:RemoveUser: User [%v] removed successfully from room [%s]\n", user, room.Room.RoomName)
 			return
 		}
 	}
 
-	log.Printf("LocalRoom: RemoveUser: User %v not found in room %s\n", user, room.Room.RoomName)
+	log.Printf("LocalRoom: RemoveUser: User [%v] not found in room [%s] \n", user, room.Room.RoomName)
 }
 
 func (room *LocalRoom) SendMessage(user entities.User, message entities.Message) {
-	log.Printf("LocalRoom: SendMessage: User %v is sending message %v to room %s\n", user, message, room.Room.RoomName)
+	log.Printf("LocalRoom: SendMessage: User [%v] is sending message [%v] to room [%s]\n", user, message, room.Room.RoomName)
 
 	// Key operation: Add the message to the broker
-	log.Printf("LocalRoom: SendMessage:  messages from room.ClientTopic %s\n", room.ClientTopic)
+	log.Printf("LocalRoom: SendMessage:  messages from room.ClientTopic [%s] \n", room.ClientTopic)
 	room.Room.MessageBroker.Publish(room.ClientTopic, &message)
 
-	log.Printf("LocalRoom: SendMessage: Message %v added successfully to room %s\n", message, room.Room.RoomName)
+	log.Printf("LocalRoom: SendMessage: Message [%v] added successfully to room [%s]\n", message, room.Room.RoomName)
 }
 
 func (room *LocalRoom) GetRoomMessages() []entities.Message {
-	log.Printf("LocalRoom: GetRoomMessages: Fetching unread messages from room %s\n", room.Room.RoomName)
+	log.Printf("LocalRoom: GetRoomMessages: Fetching unread messages from room [%s]\n", room.Room.RoomName)
 	subject := room.ServerTopic
 
 	// Obtener los mensajes no leídos

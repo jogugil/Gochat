@@ -80,8 +80,9 @@ func HandleGetMessage(msg interface{}) {
 			return
 		}
 
-		if err != nil {
-			sendErrorResponse(secMod, requestData.Topic, "Servicio no disponible.", requestData.X_GoChat)
+		xGoChat := requestData.X_GoChat
+		if xGoChat == "" {
+			sendErrorResponse(secMod, requestData.Topic, "El campo x-gochat no existe.", "")
 			return
 		}
 
