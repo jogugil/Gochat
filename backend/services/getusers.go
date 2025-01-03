@@ -11,7 +11,7 @@ func HandleGetUsersMessage(msg interface{}) {
 	// Decodificar mensaje entrante
 	requestData, ok := msg.(*entities.RequestLisUsers)
 	if !ok {
-		log.Println("Invalid message type received")
+		log.Println("HandleGetUsersMessage: Invalid message type received")
 
 	}
 
@@ -43,7 +43,7 @@ func HandleGetUsersMessage(msg interface{}) {
 	}
 	_, err = secMod.UserManagement.FindUserByToken(token_user)
 	if err != nil {
-		log.Printf("HandleGetUsersMessage: CODM03: Error finding user by token: %v\n", err)
+		log.Printf("HandleGetUsersMessage:  Error finding user by token: %v\n", err)
 		return
 	}
 

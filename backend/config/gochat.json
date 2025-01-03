@@ -1,5 +1,6 @@
 {
   "broker_type": "nats",
+  
   "gochat": {
     "login": {
       "url": "/login",
@@ -18,7 +19,33 @@
     "operations":{
       "get_users": "roomlistusers.server",
       "get_messages":"roomlistmessages.server"    
-    }
+    },
+    "logs": {
+      "level": "debug",   
+      "logfile": "/var/log/nats_server.log"  
+    },
+    "dynamic_rooms": {
+      "max_rooms": 5,
+      "auto_create": true
+    },
+    "monitoring": {
+      "enabled": true,
+      "prometheus": {
+        "port": 9090,  
+        "path": "/metrics"   
+      }
+    }, 
+    "security": {
+        "auth": {
+          "enabled": true,
+          "token_expiry": "3600s",   
+          "secret_key": "my_secret_key"   
+        },
+        "api_rate_limit": {
+          "enabled": true,
+          "max_requests_per_minute": 1000
+        }
+      }
   },
   "salas": [
     {
@@ -52,6 +79,7 @@
   },
   "nats": {
     "urls": ["nats://localhost:4222", "nats://localhost:4222"],
+    "streamName":"MYGOCHAT_STREAM",
     "message": {
       "subject": "roomname",
       "data": "messagetext",

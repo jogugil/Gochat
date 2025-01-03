@@ -170,13 +170,13 @@ func (k *BrokerKafka) OnGetUsers(topic string, callback func(interface{})) error
 			rawMsg, err := json.Marshal(kafkaMsg)
 			if err != nil {
 				// Manejar el error de serialización
-				fmt.Println("BrokerKafka: OnGetUsers: Error serializando el mensaje NATS:", err)
+				log.Println("BrokerKafka: OnGetUsers: Error serializando el mensaje NATS:", err)
 				return
 			}
 			message, err := k.adapter.TransformFromExternalToGetUsers(rawMsg)
 			if err != nil {
 				// Manejar el error si es necesario
-				fmt.Println("BrokerKafka: OnGetUsers: Error transformando el mensaje:", err)
+				log.Println("BrokerKafka: OnGetUsers: Error transformando el mensaje:", err)
 				return
 			}
 			// Llamar al callback con el mensaje deserializado

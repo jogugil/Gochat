@@ -47,20 +47,23 @@ func NewRoomManagement(persistence *entities.Persistence, configFile string) *Ro
 }
 
 func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
-	log.Printf("RoomManagement: LoadFixedRoomsFromFile: Loading rooms from file: %s", configFile)
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: Loading rooms from file: %s\n", configFile)
 
 	// Asegurarse de que FixedRooms esté inicializado
 	if rm.FixedRooms == nil {
+		log.Println("RoomManagement: LoadFixedRoomsFromFile: Initializing FixedRooms map")
 		rm.FixedRooms = make(map[uuid.UUID]*models.LocalRoom)
 	}
 
 	// Abrir el archivo de configuración
 	file, err_op := os.Open(configFile)
 	if err_op != nil {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error opening file: %v", err_op)
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error opening file: %v\n", err_op)
 		return err_op
 	}
 	defer file.Close()
+
+	log.Println("RoomManagement: LoadFixedRoomsFromFile: File opened successfully")
 
 	// Decodificar el JSON en un mapa genérico
 	var config map[string]interface{}
@@ -70,6 +73,8 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 		return err
 	}
 
+	log.Println("RoomManagement: LoadFixedRoomsFromFile: JSON decoded successfully")
+
 	// Usar la fábrica para obtener el MessageBroker adecuado, pasando la configuración cargada
 	msgBroker, err_c := entities.MessageBrokerFactory(config)
 	if err_c != nil {
@@ -77,8 +82,9 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 		return err_c
 	}
 
-	// Continuar con la carga de salas como antes...
+	log.Println("RoomManagement: LoadFixedRoomsFromFile: MessageBroker created")
 
+	// Cargar la sala principal
 	gochat, ok := config["gochat"].(map[string]interface{})
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'gochat' no es un mapa.")
@@ -91,24 +97,24 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'mainroom' no es un mapa")
 	}
 
+	// Verificando cada campo de 'mainroom'
 	name, ok := mainroom["name"].(string)
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
 		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'name' no es un mapa")
 	}
+
 	server_topic, ok := mainroom["server_topic"].(string)
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
 		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'server_topic' no es un mapa")
 	}
+
 	client_topic, ok := mainroom["client_topic"].(string)
 	if !ok {
 		log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
 		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'client_topic' no es un mapa")
 	}
-
-	// Mostrar el valor del nombre
-	log.Println("RoomManagement: LoadFixedRoomsFromFile: Nombre de la sala:", name)
 
 	// Crear la sala con los datos obtenidos
 	rm.MainRoom = &models.LocalRoom{
@@ -121,17 +127,27 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 			ClientTopic:   client_topic,
 		},
 	}
-	// Registrar el callback para el topic
-	topic := server_topic // Este sería el topic donde se reciben los mensajes
-	msgBroker.OnMessage(topic, HandleNewMessages)
-	//  carga la sala principal y la agregar al mapa FixedRooms
-	rm.FixedRooms[rm.MainRoom.RoomId] = rm.MainRoom
 
+	// Verificar la creación de la sala
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: rm.MainRoom: %v", rm.MainRoom)
+
+	// Registrar el callback para el topic
+	topic := server_topic
+	msgBroker.OnMessage(topic, HandleNewMessages)
+
+	// Cargar la sala principal en FixedRooms
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: rm.MainRoom.Room.RoomId : %s", rm.MainRoom.Room.RoomId)
+	rm.FixedRooms[rm.MainRoom.Room.RoomId] = rm.MainRoom
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: FixedRooms map after adding main room: %v", rm.FixedRooms)
+
+	// Cargar las demás salas
 	salas, ok := config["salas"].([]interface{})
 	if !ok {
 		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: 'salas' is not an array")
 		return fmt.Errorf("'salas' is not an array")
 	}
+
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: Found %d salas", len(salas))
 
 	// Usar Lock para acceder de manera segura a FixedRooms
 	rm.mu.Lock()
@@ -140,7 +156,6 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 	// Iterar sobre las salas y cargarlas en el mapa FixedRooms
 	for _, roomDataInterface := range salas {
 		roomData, ok := roomDataInterface.(map[string]interface{})
-
 		if !ok {
 			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: roomData is not a map")
 			continue
@@ -149,69 +164,73 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 		// Parsear el ID de la sala
 		roomID, err := uuid.Parse(roomData["id"].(string))
 		if err != nil {
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v -- roomName:%s", err, roomData["name"].(string))
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v -- roomName: %s", err, roomData["name"].(string))
 			continue
 		}
+
+		// Verificando el nombre y los topics
 		name, ok = roomData["name"].(string)
 		if !ok {
 			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'name' no es un mapa")
+			continue
 		}
+
 		server_topic, ok = roomData["server_topic"].(string)
 		if !ok {
 			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'server_topic' no es un mapa")
+			continue
 		}
+
 		client_topic, ok = roomData["client_topic"].(string)
 		if !ok {
 			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'client_topic' no es un mapa")
+			continue
 		}
+
 		// Crear la sala con los datos obtenidos
 		room := &models.LocalRoom{
 			Room: entities.Room{
 				RoomId:        roomID,
 				RoomName:      name,
 				RoomType:      "Fixed",
-				MessageBroker: msgBroker, // Usar el broker creado
+				MessageBroker: msgBroker,
 				ServerTopic:   server_topic,
 				ClientTopic:   client_topic,
 			},
 		}
-		// Obtenemos los topics para las peticiones de lsitado de usauiios y mensajes por los usuarios al inicio del chat
-		// El usuario, al logarse, se redirige a la pantalla de login y debe mostar ya el lsitado de usaurios y mensajes antiguos en la sala
-		//Por ello se envia una petición al servidor que le devuelva el lsitado de usuarios y mensajes antiguos.
-		//De la misma forma se crearan operaciones de administación
-		/*"operations":{
-			"get_users": "roomlistusers.server",
-			"get_messages":"roomlistmessages.server"
-		  }
-		*/
-		operations, ok := gochat["operations"].(map[string]interface{})
-		if !ok {
-			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'operations' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - 'operations' no es un mapa")
-		}
-		get_users, ok := operations["get_users"].(string)
-		if !ok {
-			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_users' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_users' no es un mapa")
-		}
-		get_messages, ok := operations["get_messages"].(string)
-		if !ok {
-			log.Println("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_messages' no es un mapa.")
-			return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: Error - 'get_messages' no es un mapa")
-		}
 
-		msgBroker.OnGetUsers(get_users, HandleGetUsersMessage)
-		msgBroker.OnGetMessage(get_messages, HandleGetMessage)
+		// Verificando la creación de la sala
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Created room: %v", room)
+
 		// Agregar la sala al mapa de salas fijas
 		rm.FixedRooms[roomID] = room
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: FixedRooms map after adding room: %v", rm.FixedRooms)
+	}
+	// tenemos que crear los handlers para las peticiones de listado de usaurios y listado demensajes historicos
+	//La primer avez que un usuario entra pide la lista de usaurios y menajes presnetes ya en el chat
+	operationsConfig, ok := gochat["operations"].(map[string]interface{})
+	if ok {
+		// Agregar topics de operations
+		getUsersTopic, ok := operationsConfig["get_users"].(string)
+		if !ok {
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado mende usuarios ")
+		} else {
+			msgBroker.OnGetUsers(getUsersTopic, HandleGetUsersMessage)
+		}
+		getMessagesTopic, ok := operationsConfig["get_messages"].(string)
+		if !ok {
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado de mensajes")
+		} else {
+			msgBroker.OnGetMessage(getMessagesTopic, HandleGetMessage)
+		}
+	} else {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion de operaciones")
 	}
 
 	log.Println("RoomManagement: LoadFixedRoomsFromFile: Load completed.")
 	return nil
 }
+
 func (rm *RoomManagement) CreateTemporaryRoom(name string) *models.LocalRoom {
 	log.Printf("RoomManagement: CreateTemporaryRoom: Creating temporary room with name: %s", name)
 	rm.mu.Lock()
@@ -316,7 +335,7 @@ func (rm *RoomManagement) GetMessages(roomID uuid.UUID) ([]entities.Message, err
 		log.Printf("RoomManagement: GetMessagesFromId: Error getting room: room is nil")
 		return nil, fmt.Errorf("RoomManagement: room not found with ID: %s", roomID)
 	}
-	log.Printf("RoomManagement: GetMessages: Getting all messages from roomName %s -- topic: %s", room.RoomName, room.ServerTopic)
+	log.Printf("RoomManagement: GetMessages: Getting all messages from roomName %s -- topic: %s", room.Room.RoomName, room.ServerTopic)
 	messages := room.GetRoomMessages()
 	if messages == nil {
 		log.Printf("RoomManagement: GetMessages: Error getting messages")

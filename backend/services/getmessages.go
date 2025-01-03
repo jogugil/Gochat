@@ -41,13 +41,13 @@ func HandleGetMessage(msg interface{}) {
 	respChan := make(chan entities.ResponseListMessages)
 	secMod, err := GetChatServerModule()
 	if err != nil {
-		log.Printf("HandleGetUsersMessage: Error al obtener el modulo de chat: %v", err)
+		log.Printf("HandleGetMessage: Error al obtener el modulo de chat: %v", err)
 		return
 	}
 	// Ejecutar el manejo de la solicitud en una goroutine
 	go func() {
 
-		log.Printf("HandleGetUsersMessage: Datos recibidos: %+v", requestData)
+		log.Printf("HandleGetMessage: Datos recibidos: %+v", requestData)
 
 		// Validate if the user is authorized to send the message
 		token_user, err := secMod.UserManagement.GetUserToken(nickname)
@@ -148,8 +148,8 @@ func HandleGetMessage(msg interface{}) {
 
 	err = secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetMessages(requestData.Topic, &response)
 	if err != nil {
-		log.Printf("HandleGetUsersMessage: Error al publicar la respuesta: %v", err)
+		log.Printf("HandleGetMessage: Error al publicar la respuesta: %v", err)
 	} else {
-		log.Printf("HandleGetUsersMessage: Respuesta enviada al topic %s ", requestData.Topic)
+		log.Printf("HandleGetMessage: Respuesta enviada al topic %s ", requestData.Topic)
 	}
 }

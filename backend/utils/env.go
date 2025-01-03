@@ -65,7 +65,7 @@ func GetEnvVariable(variableName string) (string, error) {
 }
 
 // splitEnv splits an environment variable into its name and value
-func splitEnv(env string) []string {
+func SplitEnv(env string) []string {
 	parts := make([]string, 2)
 	equalsIndex := -1
 	for i, c := range env {

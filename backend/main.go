@@ -29,7 +29,7 @@ func (f *FilteredWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil // Ignore the log if it doesn't match allowed classes
 }
 func main() {
-	log.SetFlags(log.Lshortfile)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	utils.LoadEnvironmentVariables()
 
 	/*
@@ -104,9 +104,13 @@ func main() {
 	log.Printf("Sala principal: %s, ID: %s\n", roomManager.MainRoom.Room.RoomName, roomManager.MainRoom.Room.RoomId)
 
 	for id, room := range roomManager.FixedRooms {
-		log.Printf("Main: Sala fija: %s, ID: %s\n", room.RoomName, id)
+		log.Printf("Main: Sala fija: %s, ID: %s\n", room.Room.RoomName, id)
 	}
-
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Main: Pánico recuperado en NATS callback: %v", r)
+		}
+	}()
 	// Crear un enrutador de Gin
 	r := gin.Default()
 
@@ -133,7 +137,7 @@ func main() {
 		log.Printf("Main: Error cargando PortServer, usando '8081' por defecto: %v", err)
 		port = "8081"
 	}
-
+	log.Printf("Main: Configuración del servidor - NameServer: %s, PortServer: %s", server, port)
 	address := fmt.Sprintf("%s:%s", server, port)
 	log.Printf("Main: Servidor escuchando en %s", address)
 

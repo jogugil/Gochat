@@ -46,15 +46,15 @@ func (room *LocalRoom) SendMessage(user entities.User, message entities.Message)
 	log.Printf("LocalRoom: SendMessage: User [%v] is sending message [%v] to room [%s]\n", user, message, room.Room.RoomName)
 
 	// Key operation: Add the message to the broker
-	log.Printf("LocalRoom: SendMessage:  messages from room.ClientTopic [%s] \n", room.ClientTopic)
-	room.Room.MessageBroker.Publish(room.ClientTopic, &message)
+	log.Printf("LocalRoom: SendMessage:  messages from room.ClientTopic [%s] \n", room.Room.ClientTopic)
+	room.Room.MessageBroker.Publish(room.Room.ClientTopic, &message)
 
 	log.Printf("LocalRoom: SendMessage: Message [%v] added successfully to room [%s]\n", message, room.Room.RoomName)
 }
 
 func (room *LocalRoom) GetRoomMessages() []entities.Message {
 	log.Printf("LocalRoom: GetRoomMessages: Fetching unread messages from room [%s]\n", room.Room.RoomName)
-	subject := room.ServerTopic
+	subject := room.Room.ServerTopic
 
 	// Obtener los mensajes no leídos
 	messages, err := room.Room.MessageBroker.GetUnreadMessages(subject)
@@ -71,7 +71,7 @@ func (room *LocalRoom) GetMessagesFromId(messageId uuid.UUID) []entities.Message
 	log.Printf("LocalRoom: GetMessagesFromId: Fetching messages from ID %v for room %s\n", messageId, room.Room.RoomName)
 
 	// Key operation: Get messages from a specific ID
-	messages, err := room.Room.MessageBroker.GetMessagesFromId(room.ServerTopic, messageId)
+	messages, err := room.Room.MessageBroker.GetMessagesFromId(room.Room.ServerTopic, messageId)
 	if err != nil {
 		log.Printf("LocalRoom: GetMessagesFromId: Error fetching messages from ID %v in room %s: %v\n", messageId, room.Room.RoomName, err)
 		return nil
@@ -84,7 +84,7 @@ func (room *LocalRoom) GetMessagesWithLimit(messageID uuid.UUID, count int) ([]e
 	log.Printf("LocalRoom: GetMessagesWithLimit: Fetching messages starting from ID %v with a limit of %d for room %s\n", messageID, count, room.Room.RoomName)
 
 	// Generar el subject (topic) de la sala
-	subject := room.ServerTopic
+	subject := room.Room.ServerTopic
 
 	// Obtener los mensajes a partir de un ID específico con un límite en la cantidad de mensajes
 	messages, err := room.Room.MessageBroker.GetMessagesWithLimit(subject, messageID, count)
