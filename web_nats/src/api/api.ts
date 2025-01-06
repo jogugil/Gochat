@@ -2,8 +2,8 @@ import axios from 'axios';
 import { UUID } from '../models/Message'; 
 import { LoginResponse } from '../types/typesComm';
 import {WebSocketManager} from '../comm/WebSocketManager';
-import { NatsStreamManager } from 'comm/WebNatsManager';
-
+import { NatsStreamManager, NatsMessage} from 'comm/WebNatsManager';
+ 
  
 const apiUrl = import.meta.env.VITE_API_URL; //'http://localhost:8081';
 
@@ -14,8 +14,6 @@ interface MessagesResponse {
 interface UsersResponse {
   users: string[];
 }
- 
-
  
 
 export const login = async (nickname: string): Promise<LoginResponse> => {
@@ -118,58 +116,54 @@ requestData := map[string]string{
 // Obtener mensajes. Función que realiza la petición para obtener los mensajes
 // Función para manejar la respuesta del WebSocket
 // Definir la función callback para procesar la respuesta
-private handleNatsMessage = (msg: NatsMessage) => {
-  try {
-    // Parsear el mensaje recibido
-    const messageData = JSON.parse(this.codec.decode(msg.data));
-    console.log("Mensaje recibido y procesado:", messageData);
+const serializeMessage = (msg: NatsMessage): string => {
+  // Convertir el Buffer a base64 antes de serializar
+  const serializedMsg = {
+    ...msg,
+    data: msg.data.toString('base64'),  // Convertir el Buffer a base64
+  };
 
-    // Aquí puedes realizar cualquier procesamiento adicional de los datos recibidos
-    const processedData = this.processMessage(messageData);
-
-    // Enviar el mensaje procesado al frontend, por ejemplo, utilizando WebSocket
-    this.sendToFrontend(processedData);
-    
-    // Acknowledge the message (manualmente, ya que estamos usando manualAck)
-    msg.ack();
-  } catch (error) {
-    console.error("Error al procesar el mensaje:", error);
-  }
+  // Serializar el objeto completo a JSON
+  return JSON.stringify(serializedMsg);
 };
 
-// Función que realiza el procesamiento adicional del mensaje
-private processMessage(messageData: any) {
-  // Aquí puedes agregar cualquier lógica para procesar el mensaje
-  // Por ejemplo, cambiar los datos, agregar campos adicionales, etc.
-  console.log("Procesando mensaje:", messageData);
-  return messageData; // Solo ejemplo, aquí deberías modificar el mensaje según tus necesidades
-}
+// Función para deserializar el mensaje NatsMessage desde un string JSON
+const deserializeMessage = (jsonStr: string): NatsMessage => {
+  const parsedMsg = JSON.parse(jsonStr);
 
-// Función para enviar el mensaje procesado al frontend (usando WebSocket, por ejemplo)
-private sendToFrontend(processedData: any) {
-  // Si tienes un WebSocket o cualquier otro mecanismo de comunicación, lo usas aquí
-  // Por ejemplo:
-  console.log("Enviando datos procesados al frontend:", processedData);
-  // Ejemplo: this.websocket.emit('message', processedData);
-}
-
-// Conectar al consumidor y asignarle la función callback
-async startConsumerWithCallback(topic: string) {
-  try {
-    const consumer = this.producersConsumers[topic]?.consumer;
-    if (consumer) {
-      // Asignamos la función de callback para manejar los mensajes del consumidor
-      consumer.on('message', this.handleNatsMessage);
-      console.log(`Consumer para el topic ${topic} iniciado con callback.`);
-    } else {
-      console.error(`No se encontró consumidor para el topic: ${topic}`);
-    }
-  } catch (error) {
-    console.error("Error al iniciar el consumidor con callback:", error);
+  // Si hay un campo 'data', convertirlo de base64 a Buffer
+  if (parsedMsg.data) {
+    parsedMsg.data = Buffer.from(parsedMsg.data, 'base64');
   }
-}
- 
- 
+
+  return parsedMsg;
+};
+
+export const handleNatsMessage = (setMessages: React.Dispatch<React.SetStateAction<Map<string, { nickname: string; message: string }>>>) => {
+  return (msg: NatsMessage) => {
+    try {
+      // Deserializar el mensaje NATS
+      const messageData = JSON.parse(msg.data.toString());
+
+      // Acceder al campo 'nickname' de los headers y comprobar su tipo
+      const nickname = msg.headers['nickname'];
+
+      if (typeof nickname === 'string') {
+        // Si 'nickname' es una cadena, procesamos el mensaje
+        setMessages((prevMessages) => {
+          const newMessages = new Map(prevMessages); // Crear una copia del Map de mensajes
+          newMessages.set(nickname, { nickname, message: messageData }); // Agregar el nuevo mensaje
+          return newMessages;
+        });
+      } else {
+        console.error('El campo "nickname" no es un string o no está presente en los headers');
+      }
+    } catch (error) {
+      console.error("Error al procesar el mensaje:", error);
+    }
+  };
+};
+
 
   /*
 	requestData := struct {
@@ -213,58 +207,7 @@ export const getAliveUsers = async (
   token: string, 
   roomId: string, 
   x_gochat: string
-): Promise<string> => {
+) => {
   
-  console.log ("<<<<<< Dentro de getAliveUsers >>>>>")
-
-  // Crear los datos que se enviarán en el WebSocket
-  const requestData = {
-    roomid: roomId,
-    tokensesion: token,
-    nickname: nickname,
-    operation: "listusers",
-    x_gochat: x_gochat
-  };
-
-  try {
-    // Obtener el WebSocket real desde WebSocketManager
-    const ws = socketManager.getSocket();
-
-    if (!ws) {
-      throw new Error('WebSocket no disponible.');
-    }
-    console.log ("Obtengo el websocket con url:",ws?.url)
-    socketManager.setOnMessageCallback(handleMessage);
-    console.log (" he creado setOnMessageCallback " );
-    // Promise que se resuelve cuando la conexión WebSocket se abre
-   // Verificar si el WebSocket está abierto antes de enviar el mensaje
-   if (ws.readyState === WebSocket.OPEN) {
-    console.log("WebSocket ya está abierto, enviando datos:", requestData);
-    ws.send(JSON.stringify(requestData));  // Enviar los datos a través del WebSocket
-  } else {
-    throw new Error('WebSocket no está abierto.');
-  }
-
-  // Esperar y procesar la respuesta
-  return new Promise<string>((resolve, reject) => {
-    ws.onmessage = (event) => {
-      try {
-        const result = handleMessage(event);  // Usamos el callback `handleMessage`
-        console.log("Me llega el resultado response:", result);
-        resolve(result);  // Devolvemos el resultado procesado
-      } catch (error) {
-        reject(error);
-      }
-    };
-
-    // Manejar errores durante la conexión WebSocket
-    ws.onerror = (err) => {
-      console.error("Error de WebSocket:", err);
-      reject(new Error('Error de WebSocket'));
-    };
-  });
-} catch (error) {
-  console.error('Error al conectar con WebSocket:', error);
-  throw error;
-}
+  
 };

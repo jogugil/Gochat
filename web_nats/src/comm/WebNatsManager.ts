@@ -4,24 +4,30 @@ import { connect, NatsConnection, StringCodec, JetStreamManager,  ConsumerOpts  
 import { v4 as uuidv4 } from 'uuid';
 
 // Accede a las variables de entorno
-const VITE_NATS_URLS = process.env.VITE_NATS_URLS?.split(',') || ['nats://localhost:4222'];
-const VITE_NATS_PREFIX_STREAMNAME = process.env.VITE_NATS_PREFIX_STREAMNAME || "MYGOCHAT_STREAM";
-const VITE_MAINROOM_CLIENT_TOPIC = process.env.VITE_MAINROOM_CLIENT_TOPIC || "principal.client";
-const VITE_MAINROOM_SERVER_TOPIC = process.env.VITE_MAINROOM_SERVER_TOPIC || "principal.server";
-const VITE_GET_USERS_TOPIC = process.env.VITE_GET_USERS_TOPIC || "roomlistusers.server";
+export const VITE_NATS_URLS = process.env.VITE_NATS_URLS?.split(',') || ['nats://localhost:4222'];
+export const VITE_NATS_PREFIX_STREAMNAME = process.env.VITE_NATS_PREFIX_STREAMNAME || "MYGOCHAT_STREAM";
+export const VITE_MAINROOM_CLIENT_TOPIC = process.env.VITE_MAINROOM_CLIENT_TOPIC || "principal.client";
+export const VITE_MAINROOM_SERVER_TOPIC = process.env.VITE_MAINROOM_SERVER_TOPIC || "principal.server";
+export const VITE_GET_USERS_TOPIC = process.env.VITE_GET_USERS_TOPIC || "roomlistusers.server";
 
 // Estructura para almacenar productores y consumidores
 interface NatsProducerConsumer {
   producer: any;  // El productor para el stream
   consumer: any;  // El consumidor para el stream
 }
-
+export  interface NatsMessage {
+  subject: string;
+  data: Buffer;
+  timestamp: string;
+  headers: Record<string, unknown>;  // Acepta claves de tipo string, pero los valores son 'unknown'
+}
 export  class NatsStreamManager {
   private natsClient: NatsConnection | null = null;
   private jsm: any = null; 
   private producersConsumers: { [key: string]: { producer: any; consumer: any; callback?: Function } } = {};
   private codec = StringCodec();
-  
+  private _isConnected: boolean = false;
+
   // Conectar a NATS y JetStream
   async connect() {
     try {
@@ -37,9 +43,14 @@ export  class NatsStreamManager {
       await this.ensureStreamExists(VITE_MAINROOM_SERVER_TOPIC, 'server');
       await this.ensureStreamExists(VITE_MAINROOM_CLIENT_TOPIC, 'client');
       await this.ensureStreamExists(VITE_GET_USERS_TOPIC, 'server');
+      this._isConnected = true;
     } catch (error) {
       console.error("Error de conexión con NATS:", error);
     }
+  }
+  // Getter para obtener el estado de conexión
+  public get isConnected(): boolean {
+    return this._isConnected;
   }
   private getProducerForTopic(topic: string): any | null {
         const producer = this.producersConsumers[topic]?.producer;
@@ -179,6 +190,7 @@ export  class NatsStreamManager {
         console.error('Error al crear o enviar el NatsMessage:', error);
     }
 }
+ 
   // Enviar un mensaje al stream correspondiente
   sendMessageToStream(topic: string, message: string) {
     const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
@@ -192,19 +204,7 @@ export  class NatsStreamManager {
     }
   }
 
-  // Recibir mensajes de un stream (desde el consumidor)
-  async receiveMessageFromStream(topic: string) {
-    const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
-    const consumer = this.producersConsumers[streamName]?.consumer;
-    
-    if (consumer) {
-      const msg = await consumer.fetch();
-      console.log(`Mensaje recibido de ${topic}:`, msg);
-    } else {
-      console.error(`No se encontró un consumidor para el stream ${streamName}`);
-    }
-  }
-
+   
   // Cerrar la conexión con NATS
   close() {
     this.natsClient?.close();
@@ -267,17 +267,90 @@ export  class NatsStreamManager {
     }
   }
 
+  // Función para manejar mensajes entrantes, ejecutar el callback asociado
+  async receiveMessageFromStream(topic: string) {
+    const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
+    const consumer = this.producersConsumers[streamName]?.consumer;
+    
+    if (consumer) {
+        // Esperar el mensaje del consumidor
+        const msg = await consumer.fetch(); // O pull(), dependiendo de tu configuración
+
+        console.log(`Mensaje recibido de ${topic}:`, msg);
+
+        // Ejecutar el callback si está asignado
+        const callback = this.producersConsumers[streamName]?.callback;
+        if (callback) {
+            console.log(`Ejecutando callback para el topic ${topic}`);
+            callback(msg); // Llamar al callback con el mensaje recibido
+        } else {
+            console.error(`No se ha asignado un callback para el topic ${topic}`);
+        }
+    } else {
+        console.error(`No se encontró un consumidor para el stream ${streamName}`);
+    }
+  }
+  // Obtenemos histórico de menajes del tópic
+  async getLastMessagesFromTopic(topic: string, limit: number = 100) {
+    const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
+    const consumer = this.producersConsumers[streamName]?.consumer;
+
+    if (consumer) {
+        try {
+            // Recuperar los últimos `limit` mensajes desde el stream
+            const result = await consumer.fetch({ maxMessages: limit });
+
+            console.log(result); // Ver la estructura del objeto
+
+            // Suponiendo que los mensajes están en un array llamado `messages`
+            const messages = result.messages || [];  // Asegúrate de acceder al array correctamente
+
+            console.log(`Recuperados ${messages.length} mensajes de ${streamName}`);
+            return messages;
+        } catch (error) {
+            console.error(`Error al obtener los mensajes del stream ${streamName}:`, error);
+            return [];
+        }
+    } else {
+        console.error(`No se encontró un consumidor para el topic ${topic}`);
+        return [];
+    }
+  }
+  // Función para enviar la solicitud a NATS para obtener los usuarios
+  async sendGetUsers(request: any, topic: string) {
+    // Crear el objeto NATSMessage
+    const natsMessage: NatsMessage = {
+      subject: topic,  // El topic es el 'subject' del mensaje
+      data: Buffer.from(JSON.stringify(request)),  // Los datos de la solicitud van en 'data'
+      timestamp: new Date().toISOString(),  // Timestamp actual
+      headers: {  // Los atributos de la solicitud van en los 'headers'
+        RoomId: request.RoomId,
+        TokenSesion: request.TokenSesion,
+        Nickname: request.Nickname,
+        Operation: request.Operation,
+        X_GoChat: request.X_GoChat
+      }
+    };
+
+    try {
+      // Usar el productor de JetStream para enviar el mensaje
+      await this.producersConsumers[topic]?.producer?.publish(natsMessage);
+      console.log(`Mensaje enviado al topic ${topic}`);
+    } catch (error) {
+      console.error('Error al enviar el mensaje:', error);
+    }
+  }
   // Función para asignar un callback a un consumidor específico
   assignCallbackToConsumer(topic: string, callback: Function) {
     const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
     const consumer = this.producersConsumers[streamName]?.consumer;
 
     if (consumer) {
-      // Asignamos el callback
-      this.producersConsumers[streamName].callback = callback;
-      console.log(`Callback asignado al consumidor para el topic ${topic}`);
+        // Asignamos el callback al consumidor
+        this.producersConsumers[streamName].callback = callback;
+        console.log(`Callback asignado al consumidor para el topic ${topic}`);
     } else {
-      console.error(`No se encontró consumidor para el topic ${topic}`);
+        console.error(`No se encontró consumidor para el topic ${topic}`);
     }
   }
 }
