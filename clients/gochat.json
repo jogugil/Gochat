@@ -1,0 +1,97 @@
+{
+  "broker_type": "kafka",
+  
+  "gochat": {
+    "login": {
+      "url": "/login",
+      "op": "post" 
+    },
+    "logout": {
+      "url": "/logout",
+      "op": "post" 
+    },
+    "mainroom": {
+      "id": "56c4f5f3-c818-4931-98f8-100f34c35d7f",
+      "name": "Sala Principal",
+      "server_topic": "principal.server",
+      "client_topic": "principal.client"
+    },
+    "operations":{
+      "get_users": "roomlistusers.server",
+      "get_messages":"roomlistmessages.server"    
+    },
+    "logs": {
+      "level": "debug",   
+      "logfile": "/var/log/nats_server.log"  
+    },
+    "dynamic_rooms": {
+      "max_rooms": 5,
+      "auto_create": true
+    },
+    "monitoring": {
+      "enabled": true,
+      "prometheus": {
+        "port": 9090,  
+        "path": "/metrics"   
+      }
+    }, 
+    "security": {
+        "auth": {
+          "enabled": true,
+          "token_expiry": "3600s",   
+          "secret_key": "my_secret_key"   
+        },
+        "api_rate_limit": {
+          "enabled": true,
+          "max_requests_per_minute": 1000
+        }
+      }
+  },
+  "salas": [
+    {
+      "id": "56c4f5f3-c818-4931-98f8-200f34c35d7f",
+      "name": "Sala Fija 1",
+      "server_topic": "fija1.server",
+      "client_topic": "fija1.client"
+    },
+    {
+      "id": "56c4f5f3-c818-4931-98f8-300f34c35d7f",
+      "name": "Sala Fija 2",
+      "server_topic": "fija2.server",
+      "client_topic": "fija2.client"
+
+    }
+  ],
+  "kafka": {
+    "brokers": ["localhost:9093", "localhost:9093"],
+    "message": {
+      "key": "messageid",
+      "value": "messagetext",
+      "headers": {
+        "senddate": "senddate",
+        "serverdate": "serverdate",
+        "nickname": "nickname",
+        "token": "token",
+        "roomid": "roomid",
+        "roomname": "roomname"
+      }
+    }
+  },
+  "nats": {
+    "urls": ["nats://localhost:4222", "nats://localhost:4222"],
+    "prefixStreamName":"MYGOCHAT_STREAM",
+    "message": {
+      "subject": "roomname",
+      "data": "messagetext",
+      "header": {
+        "messageid": "messageid",
+        "senddate": "senddate",
+        "serverdate": "serverdate",
+        "nickname": "nickname",
+        "token": "token",
+        "roomid": "roomid",
+        "roomname": "roomname"
+      }
+    }
+  }
+}

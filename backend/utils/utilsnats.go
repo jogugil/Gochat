@@ -66,6 +66,58 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+func CreateStreamForTopic(js nats.JetStreamContext, prefixStreamName string, topic string) error {
+	// Crear el streamName único para cada topic
+	streamName := prefixStreamName + "_" + strings.ReplaceAll(topic, ".", "_") // Concatenamos el stream con el nombre del topic
+	log.Printf("BrokerNats: CreateStreamForTopic: Creando el Stream (%s) para el topic %s con el streamName %s\n", streamName, topic, streamName)
+	// Verificar si el nombre del stream es válido
+	isValid := isValidStreamName(streamName)
+	log.Printf("BrokerNats: El nombre del stream es válido? %v\n", isValid) // Cambio aquí
+	// Verificar si el stream ya existe
+	_, err := js.StreamInfo(streamName)
+	if err == nil {
+		// El stream existe, no se hace nada
+		log.Printf("BrokerNats: CreateStreamForTopic: El stream %s ya existe para el topic %s, no se creará uno nuevo.\n", streamName, topic)
+		return nil
+	} else if err.Error() == nats.ErrStreamNotFound.Error() {
+		// Si el stream no existe, continuar con la creación del stream
+	} else {
+		// Si ocurrió un error distinto a que el stream no existe
+		return fmt.Errorf("error al verificar el stream %s para el topic %s: %v", streamName, topic, err)
+	}
+
+	// Verificar conflictos con los streams existentes usando CheckTopicConflicts
+	conflictingStreams, err := CheckTopicConflicts(js, []string{topic})
+	if err != nil {
+		return fmt.Errorf("error al verificar los conflictos de topic %s: %v", topic, err)
+	}
+
+	// Si hay streams conflictivos, eliminarlos antes de crear el nuevo stream
+	for _, conflictingStream := range conflictingStreams {
+		log.Printf("BrokerNats: CreateStreamForTopic: Stream conflictivo encontrado (%s), eliminando el stream.\n", conflictingStream)
+		err := js.DeleteStream(conflictingStream)
+		if err != nil {
+			return fmt.Errorf("error al eliminar el stream %s: %v", conflictingStream, err)
+		}
+		log.Printf("BrokerNats: CreateStreamForTopic: Stream %s eliminado con éxito.\n", conflictingStream)
+	}
+
+	// Configurar el stream para el topic
+	streamConfig := &nats.StreamConfig{
+		Name:     streamName,      // Usamos el streamName único
+		Subjects: []string{topic}, // Vinculamos el stream al topic
+	}
+
+	// Crear el stream
+	_, err = js.AddStream(streamConfig)
+	if err != nil {
+		return fmt.Errorf("error al crear el stream (%s) para el topic %s: %v", streamName, topic, err)
+	}
+
+	log.Printf("BrokerNats: CreateStreamForTopic: Stream creado con éxito para el topic %s con el streamName %s\n", topic, streamName)
+	return nil
+}
+
 // Función auxiliar para validar nombres de streams
 func isValidStreamName(name string) bool {
 	// Verifica que el nombre sea alfanumérico y permita guiones bajos y puntos

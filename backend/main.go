@@ -36,8 +36,9 @@ func main() {
 		allowedClasses: []string{"Main", "BrokerNats", "NatsTransformer", "RoomManagement", "NewMessageHandler",
 		"ChatServerModule", "LocalRoom",  "UserManagement", "HandleNewMessages","HandleGetUsersMessage"},
 	*/
+
 	filter := &FilteredWriter{
-		allowedClasses: []string{"Main", "BrokerNats", "NatsTransformer",
+		allowedClasses: []string{"Main", "BrokerKafka", "KafkaTransformer", "RoomManagement",
 			"ChatServerModule", "LocalRoom", "HandleNewMessages", "HandleGetUsersMessage"},
 		writer: io.Discard, // Initially don't log anywhere
 	}
@@ -101,14 +102,14 @@ func main() {
 	secMod := services.CreateChatServerModule(persistence, configFile)
 	roomManager := secMod.RoomManagement
 
-	log.Printf("Sala principal: %s, ID: %s\n", roomManager.MainRoom.Room.RoomName, roomManager.MainRoom.Room.RoomId)
+	log.Printf("Main: roomManager.MainRoom.Room.RoomName: %s, ID: %s\n", roomManager.MainRoom.Room.RoomName, roomManager.MainRoom.Room.RoomId)
 
 	for id, room := range roomManager.FixedRooms {
 		log.Printf("Main: Sala fija: %s, ID: %s\n", room.Room.RoomName, id)
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Main: Pánico recuperado en NATS callback: %v", r)
+			log.Printf("Main: Pánico recuperado en callback: %v", r)
 		}
 	}()
 	// Crear un enrutador de Gin

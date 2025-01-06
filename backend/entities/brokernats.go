@@ -28,6 +28,7 @@ type BrokerNats struct {
 // NewNatsBroker inicializa un nuevo BrokerNats con JetStream.
 func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 	// Verificar que "nats" existe en la configuración
+	// Verificar que "nats" existe en la configuración
 	natsConfig, ok := config["nats"]
 	if !ok {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: 'nats' no está presente en la configuración")
@@ -44,7 +45,7 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: 'urls' no está presente en la configuración de NATS")
 	}
 
-	// Verificar que "urls" sea una lista de cadenas
+	// Conectar a NATS
 	urls, ok := urlsInterface.([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: 'urls' no es una lista válida")
@@ -74,21 +75,22 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al obtener los topics: %w", err)
 	}
-
-	// Crear el stream con todos los topics
-	streamName := "MYGOCHAT_STREAM" // Valor por defecto
-	if streamNameConfig, ok := natsConfigMap["streamName"]; ok {
-		if streamNameStr, ok := streamNameConfig.(string); ok {
-			streamName = streamNameStr
-		} else {
-			return nil, fmt.Errorf("BrokerNats: NewNatsBroker: 'streamName' no es una cadena válida")
+	prefixStreamName, ok := natsConfigMap["prefixStreamName"].(string)
+	if !ok {
+		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: 'prefixStreamName' no está presente en la configuración de NATS")
+	}
+	// Crear un stream para cada topic
+	for _, topic := range topics {
+		err := utils.CreateStreamForTopic(js, prefixStreamName, topic) // Crear stream único por cada topic
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al crear el stream para el topic %s: %w", topic, err)
 		}
 	}
-	err = utils.CreateOrUpdateStream(js, streamName, topics) //utils.CreateStream(js, conn, topics)
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
+
+	log.Printf("[*]BrokerNats: dentro de for con los Tópicos '%v'  \n", topics)
+
+	// Crear consumidores y productores para cada topic
 
 	// Limpiar recursos antes de crear nuevos productores y consumidores
 	/*err = utils.CleanUpNatsResources(js, "MYGOCHAT_STREAM", topics)
@@ -100,6 +102,7 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 
 	// Crear consumidores y productores para cada topic
 	for _, topic := range topics {
+		streamName := prefixStreamName + "_" + strings.ReplaceAll(topic, ".", "_")
 		log.Printf("[*]BrokerNats: dentro de for con el Tópico '%s' agregado al stream '%s'\n", topic, streamName)
 		if strings.HasSuffix(topic, ".client") {
 			// Comprobar si el tópico está configurado en el stream
@@ -186,13 +189,20 @@ func (b *BrokerNats) OnMessage(topic string, callback func(interface{})) error {
 			message, err := b.adapter.TransformFromExternal(natsMsg.Data)
 
 			if err != nil {
-				// Manejar el error si es necesario
-				fmt.Println("Error transformando el mensaje:", err)
-				return
+				if strings.Contains(err.Error(), "CMD100") {
+					// Ignorar CMD100 y continuar
+					log.Println("BrokerNats: OnMessage: CMD100 detectado, ignorando y continuando.")
+				} else {
+					// Manejar otros errores
+					log.Println("BrokerNats: OnMessage: Error transformando el mensaje:", err)
+					return
+				}
+			} else {
+				log.Printf("BrokerNats: OnMessage:  message: %v\n", message)
+				// Llamar al callback con el mensaje deserializado
+				callback(message)
 			}
-			log.Printf("BrokerNats: OnMessage:  message: %v\n", message)
-			// Llamar al callback con el mensaje deserializado
-			callback(message)
+
 		})
 
 		return err
@@ -219,13 +229,19 @@ func (b *BrokerNats) OnGetUsers(topic string, callback func(interface{})) error 
 			message, err := b.adapter.TransformFromExternalToGetUsers(natsMsg.Data)
 
 			if err != nil {
-				// Manejar el error si es necesario
-				fmt.Println("Error transformando el mensaje:", err)
-				return
+				if strings.Contains(err.Error(), "CMD100") {
+					// Ignorar CMD100 y continuar
+					log.Println("BrokerNats: OnGetUsers: CMD100 detectado, ignorando y continuando.")
+				} else {
+					// Manejar otros errores
+					log.Println("BrokerNats: OnGetUsers: Error transformando el mensaje:", err)
+					return
+				}
+			} else {
+				log.Printf("BrokerNats: OnGetUsers:  message: %v\n", message)
+				// Llamar al callback con el mensaje deserializado
+				callback(message)
 			}
-			log.Printf("BrokerNats: OnGetUsers:  message: %v\n", message)
-			// Llamar al callback con el mensaje deserializado
-			callback(message)
 		})
 
 		return err
@@ -251,13 +267,19 @@ func (b *BrokerNats) OnGetMessage(topic string, callback func(interface{})) erro
 			message, err := b.adapter.TransformFromExternal(natsMsg.Data)
 
 			if err != nil {
-				// Manejar el error si es necesario
-				fmt.Println("Error transformando el mensaje:", err)
-				return
+				if strings.Contains(err.Error(), "CMD100") {
+					// Ignorar CMD100 y continuar
+					log.Println("BrokerNats: OnMessage: CMD100 detectado, ignorando y continuando.")
+				} else {
+					// Manejar otros errores
+					log.Println("BrokerNats: OnMessage: Error transformando el mensaje:", err)
+					return
+				}
+			} else {
+				log.Printf("BrokerNats: OnMessage:  message: %v\n", message)
+				// Llamar al callback con el mensaje deserializado
+				callback(message)
 			}
-			log.Printf("BrokerNats: OnMessage:  message: %v\n", message)
-			// Llamar al callback con el mensaje deserializado
-			callback(message)
 		})
 
 		return err
@@ -291,18 +313,25 @@ func (b *BrokerNats) OnMessageJetStream(topic string, callback func(interface{})
 
 		// Transformar el mensaje con el adaptador
 		message, err := b.adapter.TransformFromExternal(natsMsg.Data)
+
 		if err != nil {
-			log.Printf("Error transformando el mensaje: %v", err)
-			return
+			if strings.Contains(err.Error(), "CMD100") {
+				// Ignorar CMD100 y continuar
+				log.Println("BrokerNats: OnMessage: CMD100 detectado, ignorando y continuando.")
+			} else {
+				// Manejar otros errores
+				log.Println("BrokerNats: OnMessage: Error transformando el mensaje:", err)
+				return
+			}
+		} else {
+			log.Printf("BrokerNats: OnMessage:  message: %v\n", message)
+			// Llamar al callback con el mensaje deserializado
+			callback(message)
+			// Confirmar el mensaje (opcional)
+			m.Ack()
+			log.Printf("Mensaje confirmado: %s", string(m.Data))
 		}
 
-		log.Printf("Mensaje transformado con éxito, llamando al callback.")
-		// Llamar al callback con el mensaje deserializado
-		callback(message)
-
-		// Confirmar el mensaje (opcional)
-		m.Ack()
-		log.Printf("Mensaje confirmado: %s", string(m.Data))
 	}, nats.Durable("durable-consumer"))
 
 	if err != nil {
@@ -320,43 +349,51 @@ func (b *BrokerNats) OnGetUsersJetStream(topic string, callback func(interface{}
 	// Usar la instancia de JetStream existente
 	js := b.js
 	if js == nil {
-		log.Println("Error: No se encontró una instancia válida de JetStream.")
-		return fmt.Errorf("no se encontró una instancia válida de JetStream")
+		log.Println("BrokerNats: OnGetUsersJetStream: Error: No se encontró una instancia válida de JetStream.")
+		return fmt.Errorf("BrokerNats: OnGetUsersJetStream: no se encontró una instancia válida de JetStream")
 	}
 
 	log.Printf("BrokerNats: OnGetUsersJetStream: Usando instancia de JetStream existente")
 
 	// Suscripción al topic sin crear un nuevo stream
 	_, err := js.Subscribe(topic, func(m *nats.Msg) {
-		log.Printf("Recibido mensaje en el topic [%s]: %s\n", m.Subject, string(m.Data))
+		log.Printf("BrokerNats: OnGetUsersJetStream: Recibido mensaje en el topic [%s]: %s\n", m.Subject, string(m.Data))
 
 		// Construir el mensaje NATS personalizado
 		natsMsg := &NatsMessage{
 			Subject: m.Subject,
 			Data:    m.Data,
 		}
-		log.Printf("natsMsg.Subject: %s\n", natsMsg.Subject)
-		log.Printf("natsMsg.Data: %s\n", natsMsg.Data)
+		log.Printf("BrokerNats: OnGetUsersJetStream: natsMsg.Subject: %s\n", natsMsg.Subject)
+		log.Printf("BrokerNats: OnGetUsersJetStream: natsMsg.Data: %s\n", natsMsg.Data)
 
 		// Transformar el mensaje con el adaptador
 		message, err := b.adapter.TransformFromExternalToGetUsers(natsMsg.Data)
 		if err != nil {
-			log.Printf("Error transformando el mensaje: %v", err)
-			return
+			if strings.Contains(err.Error(), "CMD100") {
+				// Ignorar CMD100 y continuar
+				log.Println("BrokerNats: OnGetUsersJetStream: CMD100 detectado, ignorando y continuando.")
+			} else {
+				// Manejar otros errores
+				log.Println("BrokerNats: OnGetUsersJetStream: Error transformando el mensaje:", err)
+				return
+			}
+		} else {
+
+			log.Printf("BrokerNats: OnGetUsersJetStream: Mensaje transformado con éxito, llamando al callback.")
+			// Llamar al callback con el mensaje deserializado
+			callback(message)
+
+			// Confirmar el mensaje (opcional)
+			m.Ack()
+			log.Printf("BrokerNats: OnGetUsersJetStream: Mensaje confirmado: %s", string(m.Data))
 		}
 
-		log.Printf("Mensaje transformado con éxito, llamando al callback.")
-		// Llamar al callback con el mensaje deserializado
-		callback(message)
-
-		// Confirmar el mensaje (opcional)
-		m.Ack()
-		log.Printf("Mensaje confirmado: %s", string(m.Data))
 	}, nats.Durable("durable-consumer"))
 
 	if err != nil {
-		log.Printf("Error al suscribir al tópico: %v", err)
-		return fmt.Errorf("error al suscribir al tópico %s: %v", topic, err)
+		log.Printf("BrokerNats: OnGetUsersJetStream: Error al suscribir al tópico: %v", err)
+		return fmt.Errorf("BrokerNats: OnGetUsersJetStream: error al suscribir al tópico %s: %v", topic, err)
 	}
 
 	log.Printf("BrokerNats: OnGetUsersJetStream: Suscripción exitosa al topic: [%s]", topic)
@@ -369,15 +406,15 @@ func (b *BrokerNats) OnGetMessageJetStream(topic string, callback func(interface
 	// Usar la instancia de JetStream existente
 	js := b.js
 	if js == nil {
-		log.Println("Error: No se encontró una instancia válida de JetStream.")
-		return fmt.Errorf("no se encontró una instancia válida de JetStream")
+		log.Println("BrokerNats: OnGetMessageJetStream: Error: No se encontró una instancia válida de JetStream.")
+		return fmt.Errorf("BrokerNats: OnGetMessageJetStream: no se encontró una instancia válida de JetStream")
 	}
 
 	log.Printf("BrokerNats: OnGetMessageJetStream: Usando instancia de JetStream existente")
 
 	// Suscripción al topic sin crear un nuevo stream
 	_, err := js.Subscribe(topic, func(m *nats.Msg) {
-		log.Printf("Recibido mensaje en el topic [%s]: %s\n", m.Subject, string(m.Data))
+		log.Printf("BrokerNats: OnGetMessageJetStream: Recibido mensaje en el topic [%s]: %s\n", m.Subject, string(m.Data))
 
 		// Construir el mensaje NATS personalizado
 		natsMsg := &NatsMessage{
@@ -390,22 +427,30 @@ func (b *BrokerNats) OnGetMessageJetStream(topic string, callback func(interface
 		// Transformar el mensaje con el adaptador
 		message, err := b.adapter.TransformFromExternal(natsMsg.Data)
 		if err != nil {
-			log.Printf("Error transformando el mensaje: %v", err)
-			return
+			if strings.Contains(err.Error(), "CMD100") {
+				// Ignorar CMD100 y continuar
+				log.Println("BrokerNats: OnGetMessageJetStream: CMD100 detectado, ignorando y continuando.")
+			} else {
+				// Manejar otros errores
+				log.Println("BrokerNats: OnGetMessageJetStream: Error transformando el mensaje:", err)
+				return
+			}
+		} else {
+
+			log.Printf("BrokerNats: OnGetMessageJetStream: Mensaje transformado con éxito, llamando al callback.")
+			// Llamar al callback con el mensaje deserializado
+			callback(message)
+
+			// Confirmar el mensaje (opcional)
+			m.Ack()
+			log.Printf("BrokerNats: OnGetMessageJetStream: Mensaje confirmado: %s", string(m.Data))
 		}
 
-		log.Printf("Mensaje transformado con éxito, llamando al callback.")
-		// Llamar al callback con el mensaje deserializado
-		callback(message)
-
-		// Confirmar el mensaje (opcional)
-		m.Ack()
-		log.Printf("Mensaje confirmado: %s", string(m.Data))
 	}, nats.Durable("durable-consumer"))
 
 	if err != nil {
-		log.Printf("Error al suscribir al tópico: %v", err)
-		return fmt.Errorf("error al suscribir al tópico %s: %v", topic, err)
+		log.Printf("BrokerNats: OnGetMessageJetStream: Error al suscribir al tópico: %v", err)
+		return fmt.Errorf("BrokerNats: OnGetMessageJetStream: error al suscribir al tópico %s: %v", topic, err)
 	}
 
 	log.Printf("BrokerNats: OnGetMessageJetStream: Suscripción exitosa al topic: [%s]", topic)
@@ -491,22 +536,23 @@ func (b *BrokerNats) Publish(topic string, message *Message) error {
 }
 
 // Publica un mensaje en un tópico específico.
-func (b *BrokerNats) PublishGetUSers(topic string, message *ResponseListUser) error {
+func (b *BrokerNats) PublishGetUsers(topic string, message *ResponseListUser) error {
+	log.Printf("BrokerNats: PublishGetUsers: Mensaje ha  ublicar con JetStream. topic: %s, Secuencia: %v\n", topic, message)
 	// Transforma el mensaje a su formato externo.
-	msgData, err := b.adapter.TransformToExternalUsers(message)
+	msgData, err := b.adapter.TransformToExternalUsers(topic, message)
 	if err != nil {
-		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s", err)
+		log.Printf("BrokerNats: PublishGetUsers: Error al transformar el mensaje de la app al formato externo: %s\n", err)
 		return err
 	}
-
+	log.Printf("BrokerNats: PublishGetUsers: Mensaje ha  ublicar con JetStream. topic: %s, msgData: %v\n", topic, msgData)
 	// Publica el mensaje usando JetStream.
 	ack, err := b.js.Publish(topic, msgData)
 	if err != nil {
-		log.Printf("BrokerNats: Publish: Error al publicar mensaje en JetStream: %s", err)
+		log.Printf("BrokerNats: PublishGetUsers: Error al publicar mensaje en JetStream: %s\n", err)
 		return err
 	}
 
-	log.Printf("BrokerNats: Publish: Mensaje publicado en JetStream. Stream: %s, Secuencia: %d", ack.Stream, ack.Sequence)
+	log.Printf("BrokerNats: PublishGetUsers: Mensaje publicado en JetStream. Stream: %s, Secuencia: %d\n", ack.Stream, ack.Sequence)
 	return nil
 }
 
@@ -515,18 +561,18 @@ func (b *BrokerNats) PublishGetMessages(topic string, message *ResponseListMessa
 	// Transforma el mensaje a su formato externo.
 	msgData, err := b.adapter.TransformToExternalMessages(message)
 	if err != nil {
-		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s", err)
+		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s\n", err)
 		return err
 	}
 
 	// Publica el mensaje usando JetStream.
 	ack, err := b.js.Publish(topic, msgData)
 	if err != nil {
-		log.Printf("BrokerNats: Publish: Error al publicar mensaje en JetStream: %s", err)
+		log.Printf("BrokerNats: Publish: Error al publicar mensaje en JetStream: %s\n", err)
 		return err
 	}
 
-	log.Printf("BrokerNats: Publish: Mensaje publicado en JetStream. Stream: %s, Secuencia: %d", ack.Stream, ack.Sequence)
+	log.Printf("BrokerNats: Publish: Mensaje publicado en JetStream. Stream: %s, Secuencia: %d\n", ack.Stream, ack.Sequence)
 	return nil
 }
 
@@ -534,7 +580,7 @@ func (b *BrokerNats) PublishGetMessages(topic string, message *ResponseListMessa
 func (b *BrokerNats) Subscribe(topic string, handler func(message *Message) error) error {
 	sub, err := b.js.PullSubscribe(topic, "durable-consumer")
 	if err != nil {
-		log.Printf("error al crear suscripción: %s", err)
+		log.Printf("BrokerNats: Subscribe: error al crear suscripción: %s\n", err)
 		return err
 	}
 
@@ -543,26 +589,32 @@ func (b *BrokerNats) Subscribe(topic string, handler func(message *Message) erro
 		for {
 			messages, err := sub.Fetch(10) // Configura la cantidad de mensajes que se obtendrán
 			if err != nil {
-				log.Printf("error al recuperar mensajes: %s", err)
+				log.Printf("BrokerNats: Subscribe: error al recuperar mensajes: %s\n", err)
 				continue
 			}
 
 			for _, msg := range messages {
 				msgApp, err := b.adapter.TransformFromExternal(msg.Data)
 				if err != nil {
-					log.Printf("error al transformar el mensaje: %s", err)
-					msg.Nak()
-					continue
+					if strings.Contains(err.Error(), "CMD100") {
+						// Ignorar CMD100 y continuar
+						log.Println("BrokerNats: Subscribe: CMD100 detectado, ignorando y continuando.")
+					} else {
+						// Manejar otros errores
+						log.Println("BrokerNats: Subscribe: Error transformando el mensaje:", err)
+						return
+					}
+				} else {
+					// Procesar el mensaje
+					if err := handler(msgApp); err != nil {
+						log.Printf("BrokerNats: Subscribe: error al procesar el mensaje: %s\n", err)
+						msg.Nak()
+					} else {
+						log.Printf("BrokerNats: Subscribe: mensaje procesado con éxito\n")
+						msg.Ack()
+					}
 				}
 
-				// Procesar el mensaje
-				if err := handler(msgApp); err != nil {
-					log.Printf("error al procesar el mensaje: %s", err)
-					msg.Nak()
-				} else {
-					log.Printf("mensaje procesado con éxito")
-					msg.Ack()
-				}
 			}
 		}
 	}()
@@ -574,7 +626,7 @@ func (b *BrokerNats) Subscribe(topic string, handler func(message *Message) erro
 func (b *BrokerNats) Publish_native(topic string, message *Message) error {
 	msgK, err := b.adapter.TransformToExternal(message)
 	if err != nil {
-		log.Printf("BrokerNats: Publish: Un error al transformar el mensaje de mi app al mensaje de kafka: %s", err)
+		log.Printf("BrokerNats: Publish_native: Un error al transformar el mensaje de mi app al mensaje de kafka: %s\n", err)
 		return err
 	}
 	return b.conn.Publish(topic, msgK)
@@ -586,21 +638,25 @@ func (b *BrokerNats) Subscribe_native(topic string, handler func(message []byte)
 		// Llamamos a TransformFromExternal pasando los datos del mensaje (msg.Data)
 		msgApp, err := b.adapter.TransformFromExternal(msg.Data)
 		if err != nil {
-			log.Printf("BrokerNats: Subscribe: Error al transformar el mensaje de kafka a mi app: %s", err)
-			return
-		}
-
-		// Llamada al handler con los datos originales del mensaje (msg.Data)
-		if err := handler(msg.Data); err != nil {
-			log.Printf("BrokerNats: Subscribe:  Un error al procesar el mensaje: %s", err)
+			if strings.Contains(err.Error(), "CMD100") {
+				// Ignorar CMD100 y continuar
+				log.Println("BrokerNats: Publish_native: CMD100 detectado, ignorando y continuando.")
+			} else {
+				// Manejar otros errores
+				log.Println("BrokerNats: Publish_native: Error transformando el mensaje:", err)
+				return
+			}
 		} else {
-			// Si no hay error, mostramos el mensaje de NATS
-			log.Printf("BrokerNats: Subscribe:  Mensaje recibido de NATS: %s", string(msg.Data))
-
-			// Logueamos los detalles del mensaje transformado (de la app)
-			// Aquí puedes personalizar el log dependiendo de la estructura de tu entidad Message
-			log.Printf("BrokerNats: Subscribe: Mensaje procesado: ID: %d, Name: %s", msgApp.MessageId, msgApp.Nickname)
+			// Llamada al handler con los datos originales del mensaje (msg.Data)
+			if err := handler(msg.Data); err != nil {
+				log.Printf("BrokerNats: Publish_native:  Un error al procesar el mensaje: %s\n", err)
+			} else {
+				// Si no hay error, mostramos el mensaje de NATS
+				log.Printf("BrokerNats: Publish_native:  Mensaje recibido de NATS: %s\n", string(msg.Data))
+				log.Printf("BrokerNats: Publish_native: Mensaje procesado: ID: %d, Name: %s\n", msgApp.MessageId, msgApp.Nickname)
+			}
 		}
+
 	})
 	return err
 }
@@ -610,14 +666,14 @@ func (b *BrokerNats) GetUnreadMessages(topic string) ([]Message, error) {
 	// Establecer la conexión con JetStream
 	js, err := b.conn.JetStream()
 	if err != nil {
-		log.Printf("BrokerNats: GetUnreadMessages: error conectando a JetStream: %v", err)
+		log.Printf("BrokerNats: GetUnreadMessages: error conectando a JetStream: %v\n", err)
 		return nil, fmt.Errorf("error conectando a JetStream: %w", err)
 	}
 	subject := topic
 	// Suscripción durable al subject
 	sub, err := js.SubscribeSync(subject, nats.Durable("message-consumer"))
 	if err != nil {
-		log.Printf("BrokerNats: GetUnreadMessages: error suscribiendo al subject %s: %v", subject, err)
+		log.Printf("BrokerNats: GetUnreadMessages: error suscribiendo al subject %s: %v\n", subject, err)
 		return nil, fmt.Errorf("error suscribiendo al subject %s: %w", subject, err)
 	}
 	defer sub.Drain() // Cierra la suscripción al final
@@ -632,7 +688,7 @@ func (b *BrokerNats) GetUnreadMessages(topic string) ([]Message, error) {
 				// Salir del bucle si no hay más mensajes dentro del tiempo límite
 				break
 			}
-			log.Printf("BrokerNats: GetUnreadMessages: Error al obtener mensaje: %v", err)
+			log.Printf("BrokerNats: GetUnreadMessages: Error al obtener mensaje: %v\n", err)
 			continue
 		}
 
@@ -640,7 +696,7 @@ func (b *BrokerNats) GetUnreadMessages(topic string) ([]Message, error) {
 		var message Message
 		err = json.Unmarshal(msg.Data, &message)
 		if err != nil {
-			log.Printf("BrokerNats: GetUnreadMessages: Error al desempaquetar el mensaje: %v", err)
+			log.Printf("BrokerNats: GetUnreadMessages: Error al desempaquetar el mensaje: %v\n", err)
 			// NAK el mensaje para volver a intentarlo
 			msg.Nak()
 			continue
@@ -649,7 +705,7 @@ func (b *BrokerNats) GetUnreadMessages(topic string) ([]Message, error) {
 		// ACK del mensaje después de procesarlo
 		err = msg.Ack()
 		if err != nil {
-			log.Printf("BrokerNats: GetUnreadMessages: Error al enviar ACK: %v", err)
+			log.Printf("BrokerNats: GetUnreadMessages: Error al enviar ACK: %v\n", err)
 			continue
 		}
 

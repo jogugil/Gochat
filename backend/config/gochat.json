@@ -63,7 +63,7 @@
     }
   ],
   "kafka": {
-    "brokers": ["localhost:9094", "localhost:9094"],
+    "brokers": ["localhost:9093", "localhost:9093"],
     "message": {
       "key": "messageid",
       "value": "messagetext",
@@ -79,7 +79,7 @@
   },
   "nats": {
     "urls": ["nats://localhost:4222", "nats://localhost:4222"],
-    "streamName":"MYGOCHAT_STREAM",
+    "prefixStreamName":"MYGOCHAT_STREAM",
     "message": {
       "subject": "roomname",
       "data": "messagetext",

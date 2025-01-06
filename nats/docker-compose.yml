@@ -12,7 +12,12 @@ services:
     restart: unless-stopped
     networks:
       - net_gochat
-
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "printjson(db.adminCommand('ping'))"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
+      timeout: 5s
   nats:
     image: nats:latest
     container_name: natsgo
@@ -36,7 +41,7 @@ services:
 
 volumes:
   mongodb_data:
-  nats_data:  
+  nats_data: 
 
 networks:
   net_gochat:

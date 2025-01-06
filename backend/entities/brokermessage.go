@@ -61,7 +61,7 @@ type MessageBroker interface {
 	// Publica un mensaje en un tópico específico.
 	Publish(topic string, message *Message) error
 	// Publica un mensaje en un tópico específico.
-	PublishGetUSers(topic string, message *ResponseListUser) error
+	PublishGetUsers(topic string, message *ResponseListUser) error
 	// Publica un mensaje en un tópico específico.
 	PublishGetMessages(topic string, message *ResponseListMessages) error
 	// Se suscribe a un tópico y recibe mensajes, procesándolos mediante el manejador proporcionado.

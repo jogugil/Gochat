@@ -1,6 +1,7 @@
 package entities
 
 import (
+	"backend/utils"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,11 +15,12 @@ import (
 )
 
 type BrokerKafka struct {
-	producer sarama.SyncProducer // Para producir mensajes
-	consumer sarama.Consumer     // Para consumir mensajes
-	adapter  KafkaTransformer    // Transformador para mensajes
-	brokers  []string            // Lista de brokers
-	config   map[string]interface{}
+	producer        sarama.SyncProducer // Para producir mensajes
+	consumer        sarama.Consumer     // Para consumir mensajes
+	activeConsumers map[string]sarama.PartitionConsumer
+	adapter         KafkaTransformer // Transformador para mensajes
+	brokers         []string         // Lista de brokers
+	config          map[string]interface{}
 }
 
 // NewKafkaBroker crea una nueva instancia de KafkaBroker.
@@ -62,7 +64,19 @@ func NewKafkaBroker(config map[string]interface{}) (MessageBroker, error) {
 	kafkaConfig := sarama.NewConfig()
 	kafkaConfig.Producer.Return.Successes = true // Asegura confirmaciones de mensajes enviados
 	kafkaConfig.Consumer.Return.Errors = true    // Permite manejar errores en el consumidor
+	// Obtener todos los topics
+	topics, err := utils.GetTopics(config)
+	if err != nil {
+		return nil, fmt.Errorf("BrokerKafka: NewKafkaBroker:  error al obtener los topics: %w", err)
+	}
 
+	// Crear un topics
+	for _, topic := range topics {
+		err := utils.CreateTopicIfNotExists(brokerList, topic) // Crear stream único por cada topic
+		if err != nil {
+			return nil, fmt.Errorf("BrokerKafka: NewKafkaBroker:  error al crear el stream para el topic %s: %w", topic, err)
+		}
+	}
 	// Crear productor Kafka
 	producer, err := sarama.NewSyncProducer(brokerList, kafkaConfig)
 	if err != nil {
@@ -75,14 +89,44 @@ func NewKafkaBroker(config map[string]interface{}) (MessageBroker, error) {
 		producer.Close()
 		return nil, fmt.Errorf("BrokerKafka: NewKafkaBroker: error creando consumidor Kafka: %w", err)
 	}
-
+	var activeConsumers = make(map[string]sarama.PartitionConsumer)
+	// Crear productores y consumidores según el sufijo del topic
+	for _, topic := range topics {
+		if strings.HasSuffix(topic, ".client") {
+			log.Printf("BrokerKafka: NewKafkaBroker Creando productor para el topic '%s'\n", topic)
+			// Enviar un mensaje de ejemplo al topic
+			msg := &sarama.ProducerMessage{
+				Topic: topic,
+				Value: sarama.StringEncoder("Mensaje inicial para topic .client"),
+			}
+			_, _, err := producer.SendMessage(msg)
+			if err != nil {
+				log.Printf("BrokerKafka: NewKafkaBroker Error enviando mensaje inicial a '%s': %v\n", topic, err)
+			} else {
+				log.Printf("BrokerKafka: NewKafkaBroker Mensaje enviado a '%s'\n", topic)
+			}
+		} else if strings.HasSuffix(topic, ".server") {
+			log.Printf("BrokerKafka: NewKafkaBroker Creando consumidor para el topic '%s'\n", topic)
+			consum, err := consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
+			if err != nil {
+				consumer.Close()
+				producer.Close()
+				return nil, fmt.Errorf("BrokerKafka: NewKafkaBroker error creando consumidor para el topic %s: %w", topic, err)
+			}
+			activeConsumers[topic] = consum
+		}
+	}
 	// Retornar instancia del broker
-	return &BrokerKafka{
-		producer: producer,
-		consumer: consumer,
-		brokers:  brokerList,
-		config:   config,
-	}, nil
+	brock := &BrokerKafka{
+		producer:        producer,
+		consumer:        consumer,
+		brokers:         brokerList,
+		activeConsumers: activeConsumers,
+		config:          config,
+	}
+	log.Printf("BrokerNats: NewKafkaBroker: Salgo de NewNatsBroker [%v]\n", brock)
+	return brock, nil
+
 }
 
 // Implementación del método Publish para Kafka.
@@ -90,7 +134,7 @@ func NewKafkaBroker(config map[string]interface{}) (MessageBroker, error) {
 func (k *BrokerKafka) Publish(topic string, message *Message) error {
 	msgK, err := k.adapter.TransformToExternal(message)
 	if err != nil {
-		log.Printf("BrokerKafka: Publish: Un error al transformar el mensaje de mi app al mensaje de kafka: %s", err)
+		log.Printf("BrokerKafka: Publish: Un error al transformar el mensaje de mi app al mensaje de kafka: %s\n", err)
 		return err
 	}
 
@@ -113,14 +157,25 @@ func (k *BrokerKafka) convertHeaders(headers []*sarama.RecordHeader) map[string]
 	return result
 }
 func (k *BrokerKafka) OnMessage(topic string, callback func(interface{})) error {
-	// Crear un consumidor para la partición del topic
-	consumer, err := k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
-	if err != nil {
-		return fmt.Errorf("failed to start consumer for topic %s: %w", topic, err)
+	log.Printf("BrokerKafka: OnMessage: Creando callback para el topic '%s'\n", topic)
+
+	// Verificar si el consumidor ya existe para este topic
+	if _, exists := k.activeConsumers[topic]; !exists {
+		// Crear un consumidor para la partición del topic si no existe
+		consumer, err := k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
+		if err != nil {
+			return fmt.Errorf("BrokerKafka: OnMessage: failed to start consumer for topic %s: %w", topic, err)
+		}
+
+		// Almacenar el consumidor en un mapa para reutilizarlo más tarde
+		k.activeConsumers[topic] = consumer
+		log.Printf("BrokerKafka: OnMessage: Consumer creado para el topic '%s'\n", topic)
 	}
 
 	// Procesar mensajes en un goroutine
 	go func() {
+		consumer := k.activeConsumers[topic] // Recuperar el consumidor del mapa
+
 		for msg := range consumer.Messages() {
 			// Convertir los encabezados y crear el mensaje Kafka
 			kafkaMsg := &KafkaMessage{
@@ -128,38 +183,60 @@ func (k *BrokerKafka) OnMessage(topic string, callback func(interface{})) error 
 				Value:   string(msg.Value),
 				Headers: k.convertHeaders(msg.Headers),
 			}
-			// Convertir NatsMessage a entities.Message
+
+			// Convertir kafkaMessage a entities.Message
 			rawMsg, err := json.Marshal(kafkaMsg)
 			if err != nil {
 				// Manejar el error de serialización
-				fmt.Println("Error serializando el mensaje NATS:", err)
+				fmt.Println("BrokerKafka: OnMessage: Error serializando el mensaje Kafka:", err)
 				return
 			}
-			message, err := k.adapter.TransformFromExternal(rawMsg)
-			if err != nil {
-				// Manejar el error si es necesario
-				fmt.Println("Error transformando el mensaje:", err)
-				return
-			}
-			// Llamar al callback con el mensaje deserializado
-			callback(message)
-		}
 
+			message, err := k.adapter.TransformFromExternal(rawMsg)
+			// Comprobar si el error contiene "CMD100"
+			if err != nil {
+				if strings.Contains(err.Error(), "CMD100") {
+					// Ignorar CMD100 y continuar
+					fmt.Println("BrokerKafka: OnMessage: CMD100 detectado, ignorando y continuando.")
+				} else {
+					// Manejar otros errores
+					fmt.Println("BrokerKafka: OnMessage: Error transformando el mensaje:", err)
+					return
+				}
+			} else {
+				// Llamar al callback con el mensaje deserializado
+				callback(message)
+			}
+		}
 	}()
 	return nil
 }
 
 func (k *BrokerKafka) OnGetUsers(topic string, callback func(interface{})) error {
-	// Suscripción al topic
-	// Crear un consumidor para la partición del topic
-	consumer, err := k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
-	if err != nil {
-		return fmt.Errorf("failed to start consumer for topic %s: %w", topic, err)
+	log.Printf("BrokerKafka: OnGetUsers: Creando callback para el topic '%s'\n", topic)
+
+	// Verificar si el consumidor ya existe para el topic
+	consum, exists := k.activeConsumers[topic]
+	if !exists {
+		log.Printf("BrokerKafka: OnGetUsers: No existe consumidor para el topic '%s', creando uno nuevo.\n", topic)
+
+		// Crear un consumidor para el topic si no existe
+		var err error
+		consum, err = k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
+		if err != nil {
+			return fmt.Errorf("BrokerKafka: OnGetUsers: Error creando consumidor para el topic %s: %w", topic, err)
+		}
+
+		// Almacenar el consumidor en el mapa
+		k.activeConsumers[topic] = consum
+		log.Printf("BrokerKafka: OnGetUsers: Consumidor creado y agregado para el topic '%s'\n", topic)
+	} else {
+		log.Printf("BrokerKafka: OnGetUsers: Consumidor ya existe para el topic '%s'.\n", topic)
 	}
 
 	// Procesar mensajes en un goroutine
 	go func() {
-		for msg := range consumer.Messages() {
+		for msg := range consum.Messages() { // Corregido: "rane" a "range"
 			// Convertir los encabezados y crear el mensaje Kafka
 			kafkaMsg := &KafkaMessage{
 				Key:     string(msg.Key),
@@ -170,34 +247,52 @@ func (k *BrokerKafka) OnGetUsers(topic string, callback func(interface{})) error
 			rawMsg, err := json.Marshal(kafkaMsg)
 			if err != nil {
 				// Manejar el error de serialización
-				log.Println("BrokerKafka: OnGetUsers: Error serializando el mensaje NATS:", err)
+				log.Println("BrokerKafka: OnGetUsers: Error serializando el mensaje Kafka:", err)
 				return
 			}
 			message, err := k.adapter.TransformFromExternalToGetUsers(rawMsg)
 			if err != nil {
-				// Manejar el error si es necesario
-				log.Println("BrokerKafka: OnGetUsers: Error transformando el mensaje:", err)
-				return
+				if strings.Contains(err.Error(), "CMD100") {
+					// Ignorar CMD100 y continuar
+					fmt.Println("BrokerKafka: OnGetUsers: CMD100 detectado, ignorando y continuando.")
+				} else {
+					// Manejar otros errores
+					fmt.Println("BrokerKafka: OnGetUsers: Error transformando el mensaje:", err)
+					return
+				}
+			} else {
+				// Llamar al callback con el mensaje deserializado
+				callback(message)
 			}
-			// Llamar al callback con el mensaje deserializado
-			callback(message)
 		}
-
 	}()
 	return nil
 }
 
 func (k *BrokerKafka) OnGetMessage(topic string, callback func(interface{})) error {
-	// Suscripción al topic
-	// Crear un consumidor para la partición del topic
-	consumer, err := k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
-	if err != nil {
-		return fmt.Errorf("failed to start consumer for topic %s: %w", topic, err)
+	log.Printf("BrokerKafka: OnGetMessage Creando callback para el topic '%s'\n", topic)
+
+	// Verificar si el consumidor ya existe para el topic
+	consum, exists := k.activeConsumers[topic]
+	if !exists {
+		log.Printf("BrokerKafka: No existe consumidor para el topic '%s', creando uno nuevo.\n", topic)
+
+		// Crear un consumidor para el topic si no existe
+		var err error
+		consum, err = k.consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
+		if err != nil {
+			return fmt.Errorf("BrokerKafka: OnGetMessage: failed to start consumer for topic %s: %w", topic, err)
+		}
+		// Almacenar el consumidor en el mapa
+		k.activeConsumers[topic] = consum
+		log.Printf("BrokerKafka: OnGetMessage: Consumidor creado y agregado para el topic '%s'\n", topic)
+	} else {
+		log.Printf("BrokerKafka: OnGetMessage: Consumidor ya existe para el topic '%s'.\n", topic)
 	}
 
 	// Procesar mensajes en un goroutine
 	go func() {
-		for msg := range consumer.Messages() {
+		for msg := range consum.Messages() {
 			// Convertir los encabezados y crear el mensaje Kafka
 			kafkaMsg := &KafkaMessage{
 				Key:     string(msg.Key),
@@ -208,52 +303,116 @@ func (k *BrokerKafka) OnGetMessage(topic string, callback func(interface{})) err
 			rawMsg, err := json.Marshal(kafkaMsg)
 			if err != nil {
 				// Manejar el error de serialización
-				fmt.Println("BrokerKafka: OnGetMessage: Error serializando el mensaje NATS:", err)
+				log.Println("BrokerKafka: OnGetMessage: Error serializando el mensaje Kafka:", err)
 				return
 			}
 			message, err := k.adapter.TransformFromExternalToGetMessage(rawMsg)
 			if err != nil {
-				// Manejar el error si es necesario
-				fmt.Println("BrokerKafka: OnGetMessage: Error transformando el mensaje:", err)
-				return
+				if strings.Contains(err.Error(), "CMD100") {
+					// Ignorar CMD100 y continuar
+					log.Println("BrokerKafka: Subscribe: CMD100 detectado, ignorando y continuando.")
+				} else {
+					// Manejar otros errores
+					log.Println("BrokerKafka: Subscribe: Error transformando el mensaje:", err)
+					return
+				}
+			} else {
+				// Llamar al callback con el mensaje deserializado
+				callback(message)
 			}
-			// Llamar al callback con el mensaje deserializado
-			callback(message)
 		}
-
 	}()
 	return nil
 }
 
 // Publica un mensaje en un tópico específico.
-func (k *BrokerKafka) PublishGetUSers(topic string, message *ResponseListUser) error {
-	// Transforma el mensaje a su formato externo.
-	msgData, err := k.adapter.TransformToExternalUsers(message)
+func (k *BrokerKafka) PublishGetUsers(topic string, message *ResponseListUser) error {
+	log.Printf("BrokerKafka: PublishGetUsers: [%s]", topic)
+
+	// Verificar si el topic existe.
+	exists, err := k.topicExists(topic)
 	if err != nil {
-		log.Printf("BrokerNats: PublishGetUSers: Error al transformar el mensaje de la app al formato externo: %s", err)
+		log.Printf("BrokerKafka: PublishGetUsers: Error al verificar la existencia del topic '%s': %s", topic, err)
 		return err
 	}
+
+	// Si el topic no existe, intentar crearlo.
+	if !exists {
+		log.Printf("BrokerKafka: PublishGetUsers: El topic '%s' no existe. Intentando crearlo...", topic)
+		err := k.createTopic(topic)
+		if err != nil {
+			// Manejar el error si el topic ya existe
+			if strings.Contains(err.Error(), "Topic with this name already exists") {
+				log.Printf("BrokerKafka: PublishGetUsers: Topic '%s' ya existe, continuando con la publicación...", topic)
+			} else {
+				log.Printf("BrokerKafka: PublishGetUsers: Error al crear el topic '%s': %s", topic, err)
+				return err
+			}
+		} else {
+			log.Printf("BrokerKafka: PublishGetUsers: Topic '%s' creado exitosamente.", topic)
+		}
+	}
+
+	// Transformar el mensaje al formato externo.
+	msgData, err := k.adapter.TransformToExternalUsers(topic, message)
+	if err != nil {
+		log.Printf("BrokerKafka: PublishGetUsers: Error al transformar el mensaje de la app al formato externo: %s", err)
+		return err
+	}
+
+	// Publicar el mensaje en el topic.
 	msg := &sarama.ProducerMessage{
 		Topic: topic,
 		Value: sarama.ByteEncoder(msgData),
 	}
 	_, _, errsnd := k.producer.SendMessage(msg)
-	return errsnd
+	if errsnd != nil {
+		log.Printf("BrokerKafka: PublishGetUsers: Error al enviar el mensaje al topic '%s': %s", topic, errsnd)
+		return errsnd
+	}
+
+	log.Printf("BrokerKafka: PublishGetUsers: Mensaje publicado exitosamente en '%s'", topic)
+	return nil
 }
 
 // Publica un mensaje en un tópico específico.
 func (k *BrokerKafka) PublishGetMessages(topic string, message *ResponseListMessages) error {
-	// Transforma el mensaje a su formato externo.
-	msgData, err := k.adapter.TransformToExternalMessages(message)
+	log.Printf("BrokerKafka: PublishGetMessages: [%s]", topic)
+
+	// Verificar si el topic existe.
+	exists, err := k.topicExists(topic)
 	if err != nil {
-		log.Printf("BrokerNats: PublishGetMessages: Error al transformar el mensaje de la app al formato externo: %s", err)
+		log.Printf("BrokerKafka: PublishGetMessages: Error al verificar la existencia del topic '%s': %s", topic, err)
 		return err
 	}
+
+	// Si el topic no existe, crearlo.
+	if !exists {
+		log.Printf("BrokerKafka: PublishGetMessages: El topic '%s' no existe. Intentando crearlo...", topic)
+		err := k.createTopic(topic)
+		if err != nil {
+			log.Printf("BrokerKafka: PublishGetMessages: Error al crear el topic '%s': %s", topic, err)
+			return err
+		}
+		log.Printf("BrokerKafka: PublishGetMessages: Topic '%s' creado exitosamente.", topic)
+	}
+
+	// Transformar el mensaje al formato externo.
+	msgData, err := k.adapter.TransformToExternalMessages(message)
+	if err != nil {
+		log.Printf("BrokerKafka: PublishGetMessages: Error al transformar el mensaje de la app al formato externo: %s", err)
+		return err
+	}
+
+	// Publicar el mensaje en el topic.
 	msg := &sarama.ProducerMessage{
 		Topic: topic,
 		Value: sarama.ByteEncoder(msgData),
 	}
 	_, _, errsnd := k.producer.SendMessage(msg)
+	if errsnd != nil {
+		log.Printf("BrokerKafka: PublishGetMessages: Error al enviar el mensaje al topic '%s': %s", topic, errsnd)
+	}
 	return errsnd
 }
 
@@ -281,22 +440,38 @@ func (k *BrokerKafka) Subscribe(topic string, handler func(message *Message) err
 			for msg := range pc.Messages() {
 				msgApp, err := k.adapter.TransformFromExternal(msg.Value)
 				if err != nil {
-					log.Printf("BrokerKafka: Subscribe:error, %v", err)
-				}
-				// Llamada al handler con el mensaje original (msg.Value).
-				if err := handler(msgApp); err != nil {
-					log.Println("BrokerKafka: Subscribe: Error al manejar el mensaje:", err)
-				} else {
-					// Logueo del mensaje recibido de Kafka
-					log.Printf("BrokerKafka: Subscribe: Mensaje recibido de Kafka: %s", string(msg.Value))
-
-					// Transformación del mensaje de Kafka a la aplicación
-					msgApp, err := k.adapter.TransformFromExternal(msg.Value)
-					if err != nil {
-						log.Printf("BrokerKafka: Subscribe: Un error al transformar el mensaje de Kafka a mi app: %s", err)
+					if strings.Contains(err.Error(), "CMD100") {
+						// Ignorar CMD100 y continuar
+						fmt.Println("BrokerKafka: Subscribe: CMD100 detectado, ignorando y continuando.")
 					} else {
-						// Logueo del mensaje procesado
-						log.Printf("BrokerKafka: Subscribe:Mensaje procesado (app): ID: %d, Name: %s", msgApp.MessageId, msgApp.Nickname)
+						// Manejar otros errores
+						fmt.Println("BrokerKafka: Subscribe: Error transformando el mensaje:", err)
+						return
+					}
+				} else {
+					// Llamada al handler con el mensaje original (msg.Value).
+					if err := handler(msgApp); err != nil {
+						log.Println("BrokerKafka: Subscribe: Error al manejar el mensaje:", err)
+					} else {
+						// Logueo del mensaje recibido de Kafka
+						log.Printf("BrokerKafka: Subscribe: Mensaje recibido de Kafka: %s\n", string(msg.Value))
+
+						// Transformación del mensaje de Kafka a la aplicación
+						msgApp, err := k.adapter.TransformFromExternal(msg.Value)
+
+						if err != nil {
+							if strings.Contains(err.Error(), "CMD100") {
+								// Ignorar CMD100 y continuar
+								log.Println("BrokerKafka: Subscribe: CMD100 detectado, ignorando y continuando.")
+							} else {
+								// Manejar otros errores
+								log.Println("BrokerKafka: Subscribe: Error transformando el mensaje:", err)
+								return
+							}
+						} else {
+							// Logueo del mensaje procesado
+							log.Printf("BrokerKafka: Subscribe: Mensaje procesado (app): ID: %d, Name: %s\n", msgApp.MessageId, msgApp.Nickname)
+						}
 					}
 				}
 			}
@@ -310,7 +485,7 @@ func (b *BrokerKafka) GetUnreadMessages(topic string) ([]Message, error) {
 	// Obtener las particiones del topic
 	partitions, err := b.consumer.Partitions(topic)
 	if err != nil {
-		log.Printf("BrokerKafka: GetUnreadMessages: error obteniendo particiones: %v", err)
+		log.Printf("BrokerKafka: GetUnreadMessages: error obteniendo particiones: %v\n", err)
 		return nil, fmt.Errorf("error obteniendo particiones de Kafka: %w", err)
 	}
 
@@ -322,7 +497,7 @@ func (b *BrokerKafka) GetUnreadMessages(topic string) ([]Message, error) {
 		// Consumir los mensajes de la partición
 		pc, err := b.consumer.ConsumePartition(topic, partition, offset)
 		if err != nil {
-			log.Printf("BrokerKafka: GetUnreadMessages: error creando consumidor para partición: %v", err)
+			log.Printf("BrokerKafka: GetUnreadMessages: error creando consumidor para partición: %v\n", err)
 			continue
 		}
 		defer pc.Close()
@@ -332,7 +507,7 @@ func (b *BrokerKafka) GetUnreadMessages(topic string) ([]Message, error) {
 			var message Message
 			err := json.Unmarshal(msg.Value, &message)
 			if err != nil {
-				log.Printf("BrokerKafka: GetUnreadMessages: Error al desempaquetar mensaje: %v", err)
+				log.Printf("BrokerKafka: GetUnreadMessages: Error al desempaquetar mensaje: %v\n", err)
 				continue
 			}
 
@@ -351,13 +526,13 @@ func (k *BrokerKafka) GetRoomMessagesByRoomId(topic string) ([]Message, error) {
 	config.Consumer.Return.Errors = true
 	consumer, err := sarama.NewConsumer([]string{"localhost:9092"}, config)
 	if err != nil {
-		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId:Error creando el consumidor Kafka: %v", err)
+		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId: Error creando el consumidor Kafka: %v", err)
 	}
 	defer consumer.Close()
 
 	partitionList, err := consumer.Partitions(topic)
 	if err != nil {
-		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId:Error obteniendo particiones: %v", err)
+		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId: Error obteniendo particiones: %v", err)
 	}
 
 	var messages []Message
@@ -365,7 +540,7 @@ func (k *BrokerKafka) GetRoomMessagesByRoomId(topic string) ([]Message, error) {
 	for _, partition := range partitionList {
 		pc, err := consumer.ConsumePartition(topic, partition, sarama.OffsetNewest)
 		if err != nil {
-			return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId:Error consumiendo partición: %v", err)
+			return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId: Error consumiendo partición: %v", err)
 		}
 		defer pc.Close()
 
@@ -373,7 +548,7 @@ func (k *BrokerKafka) GetRoomMessagesByRoomId(topic string) ([]Message, error) {
 		for msg := range pc.Messages() {
 			var message Message
 			if err := json.Unmarshal(msg.Value, &message); err != nil {
-				log.Printf("BrokerKafka: GetRoomMessagesByRoomId:Error unmarshaling Kafka message: %v", err)
+				log.Printf("BrokerKafka: GetRoomMessagesByRoomId: Error unmarshaling Kafka message: %v\n", err)
 				continue
 			}
 			messages = append(messages, message)
@@ -405,7 +580,7 @@ func (k *BrokerKafka) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Me
 			if err == io.EOF {
 				break
 			}
-			return nil, fmt.Errorf("error leyendo mensaje de Kafka: %w", err)
+			return nil, fmt.Errorf("BrokerKafka: GetMessagesFromId:  error leyendo mensaje de Kafka: %w", err)
 		}
 
 		// Verificar si el MessageId coincide
@@ -417,7 +592,7 @@ func (k *BrokerKafka) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Me
 		if found {
 			var message Message
 			if err := json.Unmarshal(msg.Value, &message); err != nil {
-				log.Printf("error desempaquetando mensaje: %v", err)
+				log.Printf("BrokerKafka: GetMessagesFromId: error desempaquetando mensaje: %v", err)
 				continue
 			}
 			messages = append(messages, message)
@@ -426,7 +601,7 @@ func (k *BrokerKafka) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Me
 
 	// Retornar error si no se encontró el ID
 	if !found {
-		return nil, fmt.Errorf("mensaje con ID %s no encontrado", messageId.String())
+		return nil, fmt.Errorf("BrokerKafka: GetMessagesFromId: mensaje con ID %s no encontrado", messageId.String())
 	}
 
 	return messages, nil
@@ -467,7 +642,7 @@ func (k *BrokerKafka) GetMessagesWithLimit(topic string, messageId uuid.UUID, co
 			// Deserializar el mensaje a una estructura Message.
 			var message Message
 			if err := json.Unmarshal(msg.Value, &message); err != nil {
-				log.Printf("BrokerKafka: GetMessagesWithLimit: error deserializando mensaje: %v", err)
+				log.Printf("BrokerKafka: GetMessagesWithLimit: error deserializando mensaje: %v\n", err)
 				continue
 			}
 
@@ -540,11 +715,11 @@ func (b *BrokerKafka) CreateTopic(topic string) error {
 	// Cambiar esto para pasar un puntero a details
 	err = adminClient.CreateTopic(topic, &details, false)
 	if err != nil {
-		log.Printf("BrokerKafka: CreateTopic: Error creating topic %s: %v", topic, err)
+		log.Printf("BrokerKafka: CreateTopic: Error creating topic %s: %v\n", topic, err)
 		return err
 	}
 
-	log.Printf("BrokerKafka: CreateTopic: Topic %s created successfully", topic)
+	log.Printf("BrokerKafka: CreateTopic: Topic %s created successfully\n", topic)
 	return nil
 }
 
@@ -555,6 +730,46 @@ func (k *BrokerKafka) Close() error {
 	}
 	if err := k.consumer.Close(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// Verifica si un topic existe en Kafka.
+func (k *BrokerKafka) topicExists(topic string) (bool, error) {
+	admin, err := sarama.NewClusterAdmin(k.brokers, nil)
+	if err != nil {
+		return false, fmt.Errorf("BrokerKafka: topicExists: error al crear ClusterAdmin: %w", err)
+	}
+	defer admin.Close()
+
+	topics, err := admin.ListTopics()
+	if err != nil {
+		return false, fmt.Errorf("BrokerKafka: topicExists: error al listar topics: %w", err)
+	}
+
+	_, exists := topics[topic]
+	return exists, nil
+}
+
+// Crea un topic en Kafka si no existe.
+func (k *BrokerKafka) createTopic(topic string) error {
+	admin, err := sarama.NewClusterAdmin(k.brokers, nil)
+	if err != nil {
+		return fmt.Errorf("BrokerKafka: topicExists: error al crear ClusterAdmin: %w", err)
+	}
+	defer admin.Close()
+
+	topicDetail := &sarama.TopicDetail{
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	}
+	err = admin.CreateTopic(topic, topicDetail, false)
+	if err != nil {
+		if err == sarama.ErrTopicAlreadyExists {
+			log.Printf("BrokerKafka: topicExists: El topic '%s' ya existe \n", topic)
+			return nil
+		}
+		return fmt.Errorf("BrokerKafka: topicExists: error al crear el topic '%s': %w", topic, err)
 	}
 	return nil
 }

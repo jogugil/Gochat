@@ -46,16 +46,18 @@ const (
 */
 // KafkaMessage represents the structure of a message in Kafka
 type KafkaMessage struct {
-	Key     string            `json:"key"`
-	Value   string            `json:"value"`
-	Headers map[string]string `json:"headers"`
+	Key       string                 `json:"key"`
+	Value     string                 `json:"value"`
+	Headers   map[string]interface{} `json:"headers"`
+	Timestamp time.Time              `json:"timestamp"`
 }
 
 // NatsMessage represents the structure of a message in NATS
 type NatsMessage struct {
-	Subject string            `json:"subject"`
-	Data    []byte            `json:"data"`
-	Headers map[string]string `json:"headers"`
+	Subject   string                 `json:"subject"`
+	Data      []byte                 `json:"data"`
+	Headers   map[string]interface{} `json:"headers"`
+	Timestamp time.Time              `json:"timestamp"`
 }
 
 // Clase Mensaje
@@ -103,12 +105,12 @@ type ResponseUser struct {
 	AliveUsers  []AliveUsers `json:"data,omitempty"`
 }
 type RequestListuser struct {
-	RoomId      string `json:"roomid"`
-	TokenSesion string `json:"tokensesion"`
-	Nickname    string `json:"nickname"`
-	Operation   string `json:"operation"`
-	Topic       string `json:"topic"`
-	X_GoChat    string `json:"x_gochat"`
+	RoomId      uuid.UUID `json:"roomid"`
+	TokenSesion string    `json:"tokensesion"`
+	Nickname    string    `json:"nickname"`
+	Operation   string    `json:"operation"`
+	Topic       string    `json:"topic"`
+	X_GoChat    string    `json:"x_gochat"`
 }
 
 // Función para realizar el login al API REST
@@ -241,7 +243,76 @@ func equalSubjects(subjects1, subjects2 []string) bool {
 
 	return iscontain
 }
-func SetupConsumer(js nats.JetStreamContext, streamName string, consumerName string) {
+
+func consumeHistoricalMessages(js nats.JetStreamContext, topic, streamName, consumerName string) ([]*nats.Msg, error) {
+	// Obtener la información del stream
+	streamInfo, errjs := js.StreamInfo(streamName)
+	if errjs != nil {
+		log.Fatal(errjs)
+	}
+
+	// Mostrar estadísticas del stream
+	fmt.Printf("Stream: %s\n", streamInfo.Config.Name)
+	fmt.Printf("Mensajes totales en el stream: %d\n", streamInfo.State.Msgs)
+	fmt.Printf("Bytes totales en el stream: %d\n", streamInfo.State.Bytes)
+	fmt.Printf("Mensajes no entregados: %d\n", streamInfo.State.Msgs)
+
+	// Crear el consumidor como pull para recibir mensajes históricos
+	fmt.Println("Creando el consumidor pull para mensajes históricos...")
+	_, err := js.AddConsumer(streamName, &nats.ConsumerConfig{
+		Durable:       consumerName,
+		FilterSubject: topic,
+		AckPolicy:     nats.AckExplicitPolicy,
+		DeliverPolicy: nats.DeliverAllPolicy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error al crear el consumidor pull: %v", err)
+	}
+	fmt.Println("Consumidor pull creado correctamente")
+
+	// Suscribirse como pull para recibir mensajes históricos
+	sub, err := js.PullSubscribe(topic, consumerName)
+	if err != nil {
+		return nil, fmt.Errorf("error al suscribirse como pull: %v", err)
+	}
+
+	var allMessages []*nats.Msg
+	totalMessages := streamInfo.State.Msgs // Número total de mensajes en el stream
+	batchSize := 10                        // Cantidad de mensajes a obtener por vez
+	totalFetched := uint64(0)              // Convertir totalFetched a uint64
+
+	// Procesar mensajes históricos
+	fmt.Println("Recibiendo mensajes históricos...")
+	for totalFetched < totalMessages {
+		msgs, err := sub.Fetch(batchSize, nats.MaxWait(2*time.Second))
+		if err != nil {
+			log.Printf("Error al recibir mensajes históricos: %v", err)
+			break
+		}
+		if len(msgs) == 0 {
+			// No hay más mensajes disponibles
+			break
+		}
+
+		for _, msg := range msgs {
+			if len(msg.Data) == 0 {
+				// Ignorar mensajes vacíos
+				continue
+			}
+			// Solo agregar mensajes no vacíos
+			fmt.Printf("---> Mensaje histórico recibido: [%s]\n", string(msg.Data))
+			msg.Ack()
+			allMessages = append(allMessages, msg) // Guardar el mensaje en el slice
+		}
+
+		totalFetched += uint64(len(msgs)) // Convertir len(msgs) a uint64
+		fmt.Printf("Mensajes procesados: %d/%d\n", totalFetched, totalMessages)
+	}
+
+	// Retornar los mensajes recibidos
+	return allMessages, nil
+}
+func SetupConsumer(js nats.JetStreamContext, topic string, streamName string, consumerName string) {
 	// Verificar si el consumidor 'principal-consumer' ya existe
 	consumerInfo, err := js.ConsumerInfo(streamName, consumerName)
 	if err == nil && consumerInfo != nil {
@@ -253,44 +324,18 @@ func SetupConsumer(js nats.JetStreamContext, streamName string, consumerName str
 		}
 		fmt.Println("Consumidor eliminado exitosamente")
 	}
-
-	// Crear el consumidor como pull para recibir mensajes históricos
-	fmt.Println("Creando el consumidor como pull para mensajes históricos...")
-	_, err = js.AddConsumer(streamName, &nats.ConsumerConfig{
-		Durable:       consumerName,
-		FilterSubject: "principal.client",
-		AckPolicy:     nats.AckExplicitPolicy,
-		DeliverPolicy: nats.DeliverAllPolicy,
-	})
-	if err != nil {
-		log.Fatalf("Error al crear el consumidor pull: %v", err)
-	}
-	fmt.Println("Consumidor pull creado correctamente")
-
-	// Suscribirse como pull para recibir mensajes históricos
-	sub, err := js.PullSubscribe("principal.client", consumerName)
-	if err != nil {
-		log.Fatalf("Error al suscribirse como pull: %v", err)
-	}
-
 	// Procesar mensajes históricos
 	fmt.Println("Recibiendo mensajes históricos...")
-	for {
-		msgs, err := sub.Fetch(10, nats.MaxWait(2*time.Second))
-		if err != nil {
-			log.Printf("Error al recibir mensajes históricos: %v", err)
-			break
-		}
-		if len(msgs) == 0 {
-			// No hay más mensajes históricos
-			break
-		}
-		count := 0
-		for _, msg := range msgs {
-			fmt.Printf("---> mns(%d): Mensaje histórico recibido: [%s]\n", count, string(msg.Data))
-			msg.Ack()
-			count++
-		}
+	// Crear el consumidor como pull para recibir mensajes históricos
+	msgs, err := consumeHistoricalMessages(js, topic, streamName, consumerName)
+	if err != nil {
+		log.Fatalf("Error al eliminar el consumidor: %v", err)
+	}
+	count := 0
+	for _, msg := range msgs {
+		fmt.Printf("---> mns(%d): Mensaje histórico recibido: [%s]\n", count, string(msg.Data))
+		msg.Ack()
+		count++
 	}
 
 	// Cambiar el consumidor a push
@@ -330,7 +375,6 @@ func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
 	if err != nil {
 		log.Fatalf("Error al conectar a NATS: %v", err)
 	}
-	defer nc.Close()
 
 	// Acceder a JetStream
 	js, err := nc.JetStream()
@@ -344,8 +388,9 @@ func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
 	if err != nil {
 		log.Fatalf("Error al manejar el stream: %v", err)
 	}
+	topic := "principal.client"
 	consumerName := "principal-consumer"
-	SetupConsumer(js, streamName, consumerName)
+	SetupConsumer(js, topic, streamName, consumerName)
 	// Enviar mensajes al servidor después de la suscripción
 	msg1 := GenerateMessage1(nickname, token, roomId, roomName)
 	msg2 := GenerateMessage2(nickname, token, roomId, roomName)
@@ -397,7 +442,7 @@ func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
 // Función para convertir Message a NatsMessage
 func ConvertToNatsMessage(topic string, msg Message) (NatsMessage, error) {
 	// Crear el mapa de headers
-	headers := map[string]string{
+	headers := map[string]interface{}{
 		"MessageId":    msg.MessageId.String(),
 		"MessageType":  string(rune(Notification)),
 		"SendDate":     msg.SendDate.Format(time.RFC3339),
@@ -462,12 +507,59 @@ func GenerateMessage2(nickname, token, roomId, roomName string) Message {
 		},
 	}
 }
+
+func TransformToExternal(message *Message) ([]byte, error) {
+	// Crear el objeto KafkaMessage y mapear los valores correspondientes
+	kafkaMsg := KafkaMessage{
+		Key:       message.MessageId.String(),   // El Key es el MessageId (UUID como string)
+		Value:     message.MessageText,          // El Value es el MessageText
+		Headers:   make(map[string]interface{}), // Iniciar el mapa de headers
+		Timestamp: time.Now(),
+	}
+
+	// Mapear los valores adicionales a los headers
+	headers := map[string]interface{}{
+		"MessageId":    message.MessageId.String(),
+		"MessageType":  string(rune(Notification)),
+		"SendDate":     message.SendDate.Format(time.RFC3339),
+		"ServerDate":   message.ServerDate.Format(time.RFC3339),
+		"Nickname":     message.Nickname,
+		"Token":        message.Token,
+		"RoomID":       message.RoomID.String(),
+		"RoomName":     message.RoomName,
+		"AckStatus":    fmt.Sprintf("%t", message.Metadata.AckStatus),
+		"Priority":     fmt.Sprintf("%d", message.Metadata.Priority),
+		"OriginalLang": message.Metadata.OriginalLang,
+	}
+
+	kafkaMsg.Headers = headers
+
+	// Si tienes más campos en Message que necesitas incluir en el header, agrégales aquí
+	// Ejemplo: kafkaMsg.Headers["OtroCampo"] = message.OtroCampo
+
+	// Convertimos KafkaMessage a []byte
+	rawMsg, err := json.Marshal(kafkaMsg)
+	if err != nil {
+		return nil, fmt.Errorf("error al serializar el mensaje de Kafka: %v", err)
+	}
+
+	// Retornar el mensaje serializado en formato JSON
+	return rawMsg, nil
+}
+func getHeaderValue(headers map[string]interface{}, key, defaultValue string) string {
+	if value, exists := headers[key]; exists {
+		log.Printf("KafkaTransformer: getHeaderValue: value :%s", value)
+		return value.(string)
+	}
+	log.Printf("KafkaTransformer: getHeaderValue: defaultValue :%s", defaultValue)
+	return defaultValue
+}
 func CreateNatsMessage(msg RequestListuser) (NatsMessage, error) {
 
 	// Crear el mapa de headers
-	headers := map[string]string{
+	headers := map[string]interface{}{
 		"Nickname":    msg.Nickname,
-		"RoomId":      msg.RoomId,
+		"RoomId":      msg.RoomId.String(),
 		"Operation":   msg.Operation,
 		"Topic":       msg.Topic,
 		"TokenSesion": msg.TokenSesion,
@@ -477,23 +569,26 @@ func CreateNatsMessage(msg RequestListuser) (NatsMessage, error) {
 	// Crear la estructura del mensaje
 	natsMsg := NatsMessage{
 		Subject: msg.Topic,
-		Data:    []byte("Petición de lista de usuarios"), // Mensaje descriptivo en bytes
-		Headers: headers,                                 // Headers contienen todos los atributos
+		Data:    []byte("Petición de lista de usuarios 22"), // Mensaje descriptivo en bytes
+		Headers: headers,                                    // Headers contienen todos los atributos
 	}
 
 	return natsMsg, nil
 }
-func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token string) (<-chan ResponseUser, chan error) {
+func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token string) (<-chan NatsMessage, chan error) {
 	// Canales para manejar las respuestas y errores
-	responseChannel := make(chan ResponseUser)
+	responseChannel := make(chan NatsMessage)
 	errorChannel := make(chan error)
 
 	go func() {
 		defer close(responseChannel)
 		defer close(errorChannel)
-
+		roomid, err := uuid.Parse(idsala)
+		if err != nil {
+			fmt.Printf("errorid sala id format: %v\n", err)
+		}
 		requestData := RequestListuser{
-			RoomId:      idsala,
+			RoomId:      roomid,
 			TokenSesion: token,
 			Nickname:    nickname,
 			Operation:   "listusers",
@@ -545,7 +640,7 @@ func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token st
 		}
 
 		// Recibir la respuesta
-		msgs, err := subscription.Fetch(1, nats.MaxWait(5*time.Second)) // Timeout de 5 segundos
+		msgs, err := subscription.Fetch(1, nats.MaxWait(35*time.Second)) // Timeout de 5 segundos
 		if err != nil {
 			errorChannel <- fmt.Errorf("error al recibir la respuesta o timeout: %v", err)
 			return
@@ -557,7 +652,7 @@ func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token st
 		}
 
 		// Parsear la respuesta
-		var response ResponseUser
+		var response NatsMessage
 		err = json.Unmarshal(msgs[0].Data, &response)
 		if err != nil {
 			errorChannel <- fmt.Errorf("error al parsear la respuesta: %v", err)
@@ -573,13 +668,50 @@ func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token st
 
 // Función para verificar o crear un stream
 func CreateOrUpdateStream(js nats.JetStreamContext, streamName string, subjects []string) error {
+	// Verificar si ya existe un stream con el mismo nombre
 	streamInfo, err := js.StreamInfo(streamName)
 	if err != nil && !errors.Is(err, nats.ErrStreamNotFound) {
 		return fmt.Errorf("error al obtener información del stream: %v", err)
 	}
 
+	// Si el stream no existe, buscamos si hay otro stream con el mismo topic
 	if streamInfo == nil {
-		// Crear el stream si no existe
+		// Buscar si existe otro stream con los mismos subjects
+		existingStreams := js.StreamNames()
+		if existingStreams == nil {
+			return fmt.Errorf("error al obtener los nombres de los streams")
+		}
+
+		var existingStream *nats.StreamInfo
+		for existingStreamName := range existingStreams {
+			info, err := js.StreamInfo(existingStreamName)
+			if err != nil {
+				continue // Si no se puede obtener la info del stream, lo ignoramos
+			}
+			// Si algún stream tiene el mismo topic (subject), lo usamos
+			for _, subject := range info.Config.Subjects {
+				for _, newSubject := range subjects {
+					if subject == newSubject {
+						existingStream = info
+						break
+					}
+				}
+				if existingStream != nil {
+					break
+				}
+			}
+			if existingStream != nil {
+				break
+			}
+		}
+
+		// Si encontramos un stream con el mismo subject, lo usamos
+		if existingStream != nil {
+			log.Printf("BrokerNats: El stream %s ya existe y contiene el topic, utilizaremos ese stream.\n", existingStream.Config.Name)
+			return nil // Ya estamos usando el stream existente
+		}
+
+		// Si no existe un stream con el mismo topic, creamos uno nuevo
 		_, err := js.AddStream(&nats.StreamConfig{
 			Name:     streamName,
 			Subjects: subjects,
@@ -587,8 +719,9 @@ func CreateOrUpdateStream(js nats.JetStreamContext, streamName string, subjects 
 		if err != nil {
 			return fmt.Errorf("error al crear el stream: %v", err)
 		}
+		log.Printf("BrokerNats: Stream %s creado con éxito.\n", streamName)
 	} else {
-		// Actualizar el stream si existe
+		// Si el stream ya existe, solo actualizamos
 		_, err := js.UpdateStream(&nats.StreamConfig{
 			Name:     streamName,
 			Subjects: subjects,
@@ -596,6 +729,7 @@ func CreateOrUpdateStream(js nats.JetStreamContext, streamName string, subjects 
 		if err != nil {
 			return fmt.Errorf("error al actualizar el stream: %v", err)
 		}
+		log.Printf("BrokerNats: Stream %s actualizado con éxito.\n", streamName)
 	}
 
 	return nil
@@ -643,9 +777,10 @@ func main() {
 
 			fmt.Println("Proceso terminado.")
 		}
-
+		defer nc.Close()
 	} else {
 		fmt.Println("Error durante el login. Verifique su nickname y contraseña. Si el problema persiste")
 		fmt.Println("E:", loginResp.Message)
 	}
+
 }

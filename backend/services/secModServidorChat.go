@@ -22,16 +22,21 @@ var instanceChatServer *ChatServerModule
 // CreateChatServerModule creates an instance of ChatServerModule
 func CreateChatServerModule(persistence *entities.Persistence, configRoomFile string) *ChatServerModule {
 	onceServerChat.Do(func() {
+		log.Println("Iniciando la creación de ChatServerModule")
+
 		// Validación de los parámetros necesarios
 		if persistence == nil || configRoomFile == "" {
-			log.Fatalf("ChatServerModule: CreateChatServerModule:" +
-				"RoomManagement is not configured correctly.Persistence or configRoomFile is invalid.")
+			log.Fatalf("ChatServerModule: CreateChatServerModule: RoomManagement is not configured correctly. Persistence or configRoomFile is invalid.")
 		}
+
+		log.Printf("Parametros validados correctamente. Creando ChatServerModule con RoomManagement usando %s", configRoomFile)
+
 		// Si todo está bien, crea la instancia
 		instanceChatServer = &ChatServerModule{
 			RoomManagement: NewRoomManagement(persistence, configRoomFile),
 			UserManagement: NewUserManagement(),
 		}
+		log.Println("ChatServerModule creado con éxito")
 	})
 	return instanceChatServer
 }

@@ -9,7 +9,7 @@ import (
 
 func HandleGetUsersMessage(msg interface{}) {
 	// Decodificar mensaje entrante
-	requestData, ok := msg.(*entities.RequestLisUsers)
+	requestData, ok := msg.(*entities.RequestListUsers)
 	if !ok {
 		log.Println("HandleGetUsersMessage: Invalid message type received")
 
@@ -18,7 +18,7 @@ func HandleGetUsersMessage(msg interface{}) {
 	nickname := requestData.Nickname
 	token := requestData.TokenSesion
 
-	log.Printf("HandleGetUsersMessage: Datos recibidos: %+v", requestData)
+	log.Printf("HandleGetUsersMessage: Datos recibidos: %+v - nickname:[%s]\n", requestData, nickname)
 	secMod, err := GetChatServerModule()
 	if err != nil {
 		log.Printf("HandleGetUsersMessage: Error al obtener el modulo de chat: %v", err)
@@ -87,7 +87,7 @@ func HandleGetUsersMessage(msg interface{}) {
 		X_GoChat:    requestData.X_GoChat,
 	}
 
-	err = secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetUSers(requestData.Topic, &response)
+	err = secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetUsers(requestData.Topic, &response)
 	if err != nil {
 		log.Printf("HandleGetUsersMessage: Error al publicar la respuesta: %v", err)
 	} else {
@@ -102,7 +102,7 @@ func sendErrorResponse(secMod *ChatServerModule, topic, message, xGoChat string)
 		X_GoChat: xGoChat,
 	}
 
-	err := secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetUSers(topic, &responseE)
+	err := secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetUsers(topic, &responseE)
 	if err != nil {
 		log.Printf("HandleGetUsersMessage: sendErrorResponse: Error al publicar la respuesta de error: %v", err)
 	}

@@ -20,16 +20,18 @@ const (
 
 // KafkaMessage represents the structure of a message in Kafka
 type KafkaMessage struct {
-	Key     string                 `json:"key"`
-	Value   string                 `json:"value"`
-	Headers map[string]interface{} `json:"headers"`
+	Key       string                 `json:"key"`
+	Value     string                 `json:"value"`
+	Headers   map[string]interface{} `json:"headers"`
+	Timestamp time.Time              `json:"timestap"`
 }
 
 // NatsMessage represents the structure of a message in NATS
 type NatsMessage struct {
-	Subject string                 `json:"subject"`
-	Data    []byte                 `json:"data"`
-	Headers map[string]interface{} `json:"headers"`
+	Subject   string                 `json:"subject"`
+	Data      []byte                 `json:"data"`
+	Timestamp time.Time              `json:"timestap"`
+	Headers   map[string]interface{} `json:"headers"`
 }
 
 // Clase Mensaje
@@ -65,14 +67,14 @@ type Message struct {
 */
 
 // Convertir Priority si está presente
-type RequestLisUsers struct {
+type RequestListUsers struct {
 	RoomId      uuid.UUID `json:"roomid"`
 	TokenSesion string    `json:"tokensesion"`
 	Nickname    string    `json:"nickname"`
 	Topic       string    `json:"topic"`
 	X_GoChat    string    `json:"x_gochat"`
 }
-type RequestLisMessages struct {
+type RequestListMessages struct {
 	Operation     string    `json:"operation"`
 	LastMessageId uuid.UUID `json:"lastmessageid"`
 	TokenSesion   string    `json:"tokensesion"`

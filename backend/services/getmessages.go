@@ -29,7 +29,7 @@ func ConvertirMensajes(mensajes []entities.Message) []entities.MessageResponse {
 func HandleGetMessage(msg interface{}) {
 	// Decodificar el cuerpo de la solicitud
 	log.Println("HandleGetMessage: Iniciando el manejo de la solicitud POST para la lista de mensajes.")
-	requestData, ok := msg.(*entities.RequestLisMessages)
+	requestData, ok := msg.(*entities.RequestListMessages)
 	if !ok {
 		log.Println("Invalid message type received")
 

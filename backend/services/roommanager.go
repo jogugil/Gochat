@@ -69,7 +69,7 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 	var config map[string]interface{}
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error decoding JSON: %v", err)
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error decoding JSON: %v\n", err)
 		return err
 	}
 
@@ -78,7 +78,7 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 	// Usar la fábrica para obtener el MessageBroker adecuado, pasando la configuración cargada
 	msgBroker, err_c := entities.MessageBrokerFactory(config)
 	if err_c != nil {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error creating MessageBroker: %v", err_c)
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error creating MessageBroker: %v\n", err_c)
 		return err_c
 	}
 
@@ -129,25 +129,27 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 	}
 
 	// Verificar la creación de la sala
-	log.Printf("RoomManagement: LoadFixedRoomsFromFile: rm.MainRoom: %v", rm.MainRoom)
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: rm.MainRoom: %v\n", rm.MainRoom)
 
 	// Registrar el callback para el topic
 	topic := server_topic
-	msgBroker.OnMessage(topic, HandleNewMessages)
-
+	err := msgBroker.OnMessage(topic, HandleNewMessages)
+	if err != nil {
+		return err
+	}
 	// Cargar la sala principal en FixedRooms
-	log.Printf("RoomManagement: LoadFixedRoomsFromFile: rm.MainRoom.Room.RoomId : %s", rm.MainRoom.Room.RoomId)
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: rm.MainRoom.Room.RoomId : %s\n", rm.MainRoom.Room.RoomId)
 	rm.FixedRooms[rm.MainRoom.Room.RoomId] = rm.MainRoom
-	log.Printf("RoomManagement: LoadFixedRoomsFromFile: FixedRooms map after adding main room: %v", rm.FixedRooms)
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: FixedRooms map after adding main room: %v\n", rm.FixedRooms)
 
 	// Cargar las demás salas
 	salas, ok := config["salas"].([]interface{})
 	if !ok {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: 'salas' is not an array")
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: 'salas' is not an array\n")
 		return fmt.Errorf("'salas' is not an array")
 	}
 
-	log.Printf("RoomManagement: LoadFixedRoomsFromFile: Found %d salas", len(salas))
+	log.Printf("RoomManagement: LoadFixedRoomsFromFile: Found %d salas\n", len(salas))
 
 	// Usar Lock para acceder de manera segura a FixedRooms
 	rm.mu.Lock()
@@ -157,14 +159,14 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 	for _, roomDataInterface := range salas {
 		roomData, ok := roomDataInterface.(map[string]interface{})
 		if !ok {
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: roomData is not a map")
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error: roomData is not a map\n")
 			continue
 		}
 
 		// Parsear el ID de la sala
 		roomID, err := uuid.Parse(roomData["id"].(string))
 		if err != nil {
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v -- roomName: %s", err, roomData["name"].(string))
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: Error parsing ID: %v -- roomName: %s\n", err, roomData["name"].(string))
 			continue
 		}
 
@@ -200,31 +202,41 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 		}
 
 		// Verificando la creación de la sala
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Created room: %v", room)
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: Created room: %v\n", room)
 
 		// Agregar la sala al mapa de salas fijas
 		rm.FixedRooms[roomID] = room
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: FixedRooms map after adding room: %v", rm.FixedRooms)
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: FixedRooms map after adding room: %v\n", rm.FixedRooms)
 	}
 	// tenemos que crear los handlers para las peticiones de listado de usaurios y listado demensajes historicos
 	//La primer avez que un usuario entra pide la lista de usaurios y menajes presnetes ya en el chat
 	operationsConfig, ok := gochat["operations"].(map[string]interface{})
 	if ok {
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: operationsConfig ok\n")
 		// Agregar topics de operations
 		getUsersTopic, ok := operationsConfig["get_users"].(string)
 		if !ok {
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado mende usuarios ")
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado mende usuarios\n ")
 		} else {
-			msgBroker.OnGetUsers(getUsersTopic, HandleGetUsersMessage)
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: operationsConfig ok getUsersTopic :[%s]\n", getUsersTopic)
+			err := msgBroker.OnGetUsers(getUsersTopic, HandleGetUsersMessage)
+			if err != nil {
+				return err
+			}
+
 		}
 		getMessagesTopic, ok := operationsConfig["get_messages"].(string)
 		if !ok {
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado de mensajes")
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado de mensajes\n")
 		} else {
-			msgBroker.OnGetMessage(getMessagesTopic, HandleGetMessage)
+			log.Printf("RoomManagement: LoadFixedRoomsFromFile: operationsConfig ok getMessagesTopic :[%s]\n", getMessagesTopic)
+			err := msgBroker.OnGetMessage(getMessagesTopic, HandleGetMessage)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion de operaciones")
+		log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion de operaciones\n")
 	}
 
 	log.Println("RoomManagement: LoadFixedRoomsFromFile: Load completed.")
