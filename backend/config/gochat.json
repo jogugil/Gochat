@@ -74,7 +74,8 @@
         "token": "token",
         "roomid": "roomid",
         "roomname": "roomname"
-      }
+      },
+      "timestamp":"timestamp"
     }
   },
   "nats": {
@@ -91,7 +92,8 @@
         "token": "token",
         "roomid": "roomid",
         "roomname": "roomname"
-      }
+      },
+      "timestamp":"timestamp"
     }
   }
 }
