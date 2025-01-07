@@ -18,26 +18,24 @@ services:
       retries: 3
       start_period: 10s
       timeout: 5s
+ 
   nats:
-    image: nats:latest
-    container_name: natsgo
-    ports:
-      - "4222:4222"        
-      - "6222:6222"       
-      - "8222:8222"        
-    volumes:
-      - nats_data:/data   
-    command:
-      - "-js"
-      - "--store_dir"
-      - "/data"
-      - "--http_port"
-      - "8222"
-    restart: always
-    environment:
-      - JS_ENABLE=true         
-    networks:
-      - net_gochat
+      image: nats:latest
+      container_name: natsgo
+      ports:
+        - "4222:4222"        
+        - "6222:6222"       
+        - "8222:8222"      
+        - "8080:8080"   
+      volumes:
+        - ./nats-server.conf:/etc/nats/nats-server.conf  # Asegúrate de que el archivo esté en el directorio correcto
+        - nats_data:/data
+      entrypoint: ["/nats-server", "-c", "/etc/nats/nats-server.conf"]  # Aquí usamos el formato correcto para Docker
+      restart: always
+      environment:
+        - JS_ENABLE=true         
+      networks:
+        - net_gochat
 
 volumes:
   mongodb_data:
