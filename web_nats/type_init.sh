@@ -30,6 +30,8 @@ npm install --save-dev \
   prettier@^3.0.0 \
   dotenv@^16.4.7
 npm install nats
+npm install nats.ws
+
 # Actualizar todos los paquetes obsoletos (de forma controlada)
 npm outdated
 npm update
