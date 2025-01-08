@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
-
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,42 +33,21 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	utils.LoadEnvironmentVariables()
 
-	/*
-		allowedClasses: []string{"Main", "BrokerNats", "NatsTransformer", "RoomManagement", "NewMessageHandler",
-		"ChatServerModule", "LocalRoom",  "UserManagement", "HandleNewMessages","HandleGetUsersMessage"},
-	*/
-
 	filter := &FilteredWriter{
-		allowedClasses: []string{"Main", "BrokerKafka", "KafkaTransformer", "RoomManagement",
-			"ChatServerModule", "LocalRoom", "HandleNewMessages", "HandleGetUsersMessage"},
+		allowedClasses: []string{"Main", "BrokerKafka", "KafkaTransformer", "RoomManagement", "ChatServerModule",
+			"ChatServerModule", "UserManagement", "LocalRoom", "HandleNewMessages", "HandleGetUsersMessage", "MongoPersistence"},
 		writer: io.Discard, // Initially don't log anywhere
 	}
-
 	log.SetOutput(filter) // Redirect log output to our custom filter
 
+	consoleWriter := io.Writer(os.Stdout)
+	filter.writer = consoleWriter
+
+	// Cargar variables de entorno
 	ginMode, err := utils.GetEnvVariable("GIN_MODE")
 	if err != nil {
 		ginMode = "debug"
 	}
-
-	if ginMode == "release" {
-		gin.SetMode(gin.ReleaseMode)
-	} else {
-		gin.SetMode(gin.DebugMode)
-	}
-
-	consoleWriter := io.Writer(os.Stdout)
-	filter.writer = consoleWriter
-	// Cargar variables de entorno
-	utils.LoadEnvironmentVariables()
-
-	// Establecer el modo de Gin
-	ginMode, err_v := utils.GetEnvVariable("GIN_MODE")
-	if err_v != nil {
-		log.Printf("Main: No se pudo cargar GIN_MODE, usando 'debug' por defecto: %v", err_v)
-		ginMode = "debug"
-	}
-
 	if ginMode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	} else {
@@ -92,13 +72,12 @@ func main() {
 		log.Fatalf("Main: Error inicializando MongoPersistence: %v", err)
 	}
 
-	// Leer el nombre del archivo de configuración desde la variable de entorno
 	configFile, err := utils.GetEnvVariable("GOCHAT_CONFIG_FILE")
 	if err != nil {
 		log.Printf("Main: No se encontró GOCHAT_CONFIG_FILE, usando 'gochat.json' por defecto: %v", err)
 		configFile = "gochat.json"
 	}
-	log.Printf("Main:  Cargando archivo de configuración: %s", configFile)
+	log.Printf("Main: Cargando archivo de configuración: %s", configFile)
 	secMod := services.CreateChatServerModule(persistence, configFile)
 	roomManager := secMod.RoomManagement
 
@@ -107,13 +86,38 @@ func main() {
 	for id, room := range roomManager.FixedRooms {
 		log.Printf("Main: Sala fija: %s, ID: %s\n", room.Room.RoomName, id)
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Main: Pánico recuperado en callback: %v", r)
-		}
-	}()
+
 	// Crear un enrutador de Gin
 	r := gin.Default()
+
+	// Configuración CORS: permitir todos los orígenes en desarrollo.
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"}, // --123-- ojo!! Debemos Cambiar esto en producción para especificar orígenes. MEor mediante variabl entorno.
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "x-gochat"},
+		AllowCredentials: true,
+	}))
+
+	// Middleware para verificar el encabezado x-gochat
+	r.Use(func(c *gin.Context) {
+		// Excluir ciertas rutas del chequeo (por ejemplo: /status y /metrics)
+		if c.Request.URL.Path == "/status" || c.Request.URL.Path == "/metrics" {
+			c.Next()
+			return
+		}
+
+		goChatHeader := c.GetHeader("x-gochat")
+		if goChatHeader == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "nok",
+				"message": "Cliente no aceptado: Falta 'x-gochat' en el encabezado",
+			})
+			c.Abort()
+			return
+		}
+		log.Printf("Servidor: goChatHeader recibido: %s", goChatHeader)
+		c.Next()
+	})
 
 	// Crear instancias de los servicios
 	statusService := api.NewStatusService()
@@ -122,10 +126,11 @@ func main() {
 	// Rutas para monitoreo o métricas
 	r.GET("/status", statusService.Status)
 	r.GET("/metrics", metricsService.Metrics)
+
 	// Rutas de login y logout
-	r.POST("/login", api.LoginHandler)   // Rutas de Login
-	r.POST("/logout", api.LogoutHandler) // Rutas de Logout
-	// Rutas de chat
+	r.POST("/login", api.LoginHandler)
+	r.POST("/logout", api.LogoutHandler)
+
 	// Configurar el servidor
 	server, err := utils.GetEnvVariable("NameServer")
 	if err != nil {
