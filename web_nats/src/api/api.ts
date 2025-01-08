@@ -14,29 +14,77 @@ interface MessagesResponse {
 interface UsersResponse {
   users: string[];
 }
- 
+export const login = async (nickname: string): Promise<LoginResponse> => {
+  
+  console.log('login _ API URL:', apiUrl);
 
-export const login = async (nickname: string): Promise<LoginResponse> => { 
-    console.log('login _ API URL:', apiUrl);
+  try {
+    const response = await axios.post(
+      `${apiUrl}/login`,
+      JSON.stringify({ nickname }),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x_gochat': apiUrl,
+        },
+      }
+    );
+
+    const data = response.data;
+
+    // Asegurar un LoginResponse consistente
+    return {
+      status: data.status || 'nok',
+      message: data.message || 'Error desconocido',
+      token: data.token || '',
+      nickname: data.nickname || nickname,
+      roomid: data.roomid || '',
+      roomname: data.roomname || '',
+    } as LoginResponse;
+  } catch (error: any) {
+    console.warn('Error during login:', error);
+
+    // Detectar errores específicos
+    if (error.code === 'ERR_NETWORK') {
+      return {
+        status: 'nok',
+        message: 'El servidor GoChat no está disponible. Disculpe las molestias.',
+        token: '',
+        nickname: nickname,
+        roomid: '',
+        roomname: '',
+      } as LoginResponse;
+    }
+
+    // Manejar otros errores genéricos
+    return {
+      status: 'nok',
+      message: 'Error durante el login. Inténtelo de nuevo más tarde.',
+      token: '',
+      nickname: nickname,
+      roomid: '',
+      roomname: '',
+    } as LoginResponse;
+  }
+};
+export const login_new = async (nickname: string): Promise<LoginResponse> => { 
+    console.log('login API URL:', apiUrl);
     
     try {
       const loginRequest = {
-      Nickname: nickname,              // El nickname del usuario
-      X_GoChat: 'http://localhost:8081' // La URL que se envía en el campo X_GoChat
+      Nickname: nickname,              
+      X_GoChat: 'http://localhost:8081' 
       };
     
-      const response = await axios.post(
-      `${apiUrl}/login`,  // URL de la solicitud POST
-      JSON.stringify(loginRequest),  // Cuerpo de la solicitud con el LoginRequest en formato JSON
-      {
-        headers: {
-        'Content-Type': 'application/json',  // Define el tipo de contenido como JSON
-        'x-gochat': apiUrl,  // Añade la cabecera x-gochat con el valor de apiUrl
+      const response = axios.post(
+        `${apiUrl}/login`,
+        {
+          Nickname: nickname,
+          X_GoChat: 'http://localhost:8081'
         },
-      }
+        { headers: { 'Content-Type': 'application/json', 'x_gochat': apiUrl } }
       );
-    
-      const data = response.data;
+      const data = (await response).data;
     
       // Asegurar un LoginResponse consistente
       return {
@@ -49,7 +97,10 @@ export const login = async (nickname: string): Promise<LoginResponse> => {
       } as LoginResponse;
     } catch (error: any) {
       console.warn('Error during login:', error);
-    
+      if (error.response && error.response.status === 401) {
+        return { status: 'nok', nickname: nickname, message: 'Credenciales incorrectas.',
+            token: '', roomid: '',  roomname: ''} as LoginResponse;
+      }
       // Detectar errores específicos
       if (error.code === 'ERR_NETWORK') {
       return {

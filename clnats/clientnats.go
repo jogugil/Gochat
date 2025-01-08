@@ -101,7 +101,7 @@ type RequestListuser struct {
 // LoginRequest representa la estructura de la solicitud de login
 type LoginRequest struct {
 	Nickname string `json:"Nickname"`
-	X_GoChat string `json:"X_GoChat"`
+	X_GoChat string `json:"x_gochat"`
 }
 
 // LoginResponse representa la estructura de la respuesta del login
@@ -116,7 +116,7 @@ type LoginResponse struct {
 
 // Login realiza el login al API REST y maneja posibles errores
 func login(nickname string) LoginResponse {
-	apiURL := "http://localhost:8081/login"
+	apiURL := "http://localhost:8081"
 	// Crear el objeto LoginRequest
 	loginRequest := LoginRequest{
 		Nickname: nickname,
@@ -145,7 +145,7 @@ func login(nickname string) LoginResponse {
 
 	// Añadir encabezados
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-gochat", apiURL)
+	req.Header.Set("x_GoChat", apiURL)
 
 	// Enviar la solicitud
 	client := &http.Client{}

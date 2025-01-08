@@ -54,31 +54,31 @@ func main() {
 	} else {
 		gin.SetMode(gin.DebugMode)
 	}
-
+	log.Printf("Main: GIN_MODE configurado como: %s\n", ginMode)
 	// Configurar la base de datos
 	uriMongo, err := utils.GetEnvVariable("URIMongo")
 	if err != nil {
-		log.Printf("Main: Error cargando URIMongo, usando valor predeterminado: %v", err)
+		log.Printf("Main: Error cargando URIMongo, usando valor predeterminado: %v\n", err)
 		uriMongo = "mongodb://localhost:27017"
 	}
 
 	nameMongo, err := utils.GetEnvVariable("NameMongo")
 	if err != nil {
-		log.Printf("Main: Error cargando NameMongo, usando valor predeterminado: %v", err)
+		log.Printf("Main: Error cargando NameMongo, usando valor predeterminado: %v\n", err)
 		nameMongo = "MongoChat"
 	}
 
 	persistence, err := persistence.NewMongoPersistence(uriMongo, nameMongo)
 	if err != nil {
-		log.Fatalf("Main: Error inicializando MongoPersistence: %v", err)
+		log.Fatalf("Main: Error inicializando MongoPersistence: %v\n", err)
 	}
 
 	configFile, err := utils.GetEnvVariable("GOCHAT_CONFIG_FILE")
 	if err != nil {
-		log.Printf("Main: No se encontró GOCHAT_CONFIG_FILE, usando 'gochat.json' por defecto: %v", err)
+		log.Printf("Main: No se encontró GOCHAT_CONFIG_FILE, usando 'gochat.json' por defecto: %v\n", err)
 		configFile = "gochat.json"
 	}
-	log.Printf("Main: Cargando archivo de configuración: %s", configFile)
+	log.Printf("Main: Cargando archivo de configuración: %s\n", configFile)
 	secMod := services.CreateChatServerModule(persistence, configFile)
 	roomManager := secMod.RoomManagement
 
@@ -92,8 +92,9 @@ func main() {
 	r := gin.Default()
 
 	// Configuración CORS: permitir todos los orígenes en desarrollo.
+	allowedOrigins, _ := utils.GetEnvVariable("ALLOWED_ORIGINS")
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"}, // --123-- ojo!! Debemos Cambiar esto en producción para especificar orígenes. MEor mediante variabl entorno.
+		AllowOrigins:     []string{allowedOrigins}, // --123-- ojo!! Debemos Cambiar  el * esto en producción para especificar orígenes. MEor mediante variabl entorno.
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "x_gochat"},
 		AllowCredentials: true,
@@ -108,12 +109,12 @@ func main() {
 		}
 
 		// Ver todas las cabeceras que llegan
-		log.Printf("Main: Cabeceras recibidas: %+v", c.Request.Header)
+		log.Printf("Main: Cabeceras recibidas: %+v\n", c.Request.Header)
 
 		// Verifica sMAini la cabecera x_gochat está presente
 		goChatHeader := c.GetHeader("x_gochat")
 		if goChatHeader == "" {
-			log.Printf("Cabecera 'x_gochat' no encontrada.")
+			log.Printf("Main: Cabecera 'x_gochat' no encontrada\n")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  "nok",
 				"message": "Cliente no aceptado: Falta 'x_gochat' en el encabezado",
