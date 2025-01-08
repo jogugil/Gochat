@@ -82,7 +82,7 @@ func HandleGetMessage(msg interface{}) {
 
 		xGoChat := requestData.X_GoChat
 		if xGoChat == "" {
-			sendErrorResponse(secMod, requestData.Topic, "El campo x-gochat no existe.", "")
+			sendErrorResponse(secMod, requestData.Topic, "El campo x_gochat no existe.", "")
 			return
 		}
 

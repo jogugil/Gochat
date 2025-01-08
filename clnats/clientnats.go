@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
@@ -12,13 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
-
-const apiURL = "http://localhost:8081/login" // Cambia esta URL a la de tu servidor REST
-
-// Estructura para el cuerpo de la solicitud POST al API REST
-type LoginRequest struct {
-	Nickname string `json:"nickname"`
-}
 
 // Definimos el tipo MessageType como int
 type MessageType int
@@ -79,15 +73,6 @@ type Message struct {
 	Metadata    Metadata    `json:"metadata"`    // Metadatos adicionales
 }
 
-type LoginResponse struct {
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Token    string `json:"token"`
-	Nickname string `json:"nickname"`
-	Roomid   string `json:"roomid"`
-	Roomname string `json:"roomname"`
-}
-
 // Estructura para los usuarios activos
 type AliveUsers struct {
 	Nickname       string `json:"nickname"`
@@ -113,33 +98,100 @@ type RequestListuser struct {
 	X_GoChat    string    `json:"x_gochat"`
 }
 
-// Función para realizar el login al API REST
-func login(nickname string) (*LoginResponse, error) {
-	loginReq := LoginRequest{
+// LoginRequest representa la estructura de la solicitud de login
+type LoginRequest struct {
+	Nickname string `json:"Nickname"`
+	X_GoChat string `json:"X_GoChat"`
+}
+
+// LoginResponse representa la estructura de la respuesta del login
+type LoginResponse struct {
+	Status   string `json:"status"`
+	Message  string `json:"message"`
+	Token    string `json:"token"`
+	Nickname string `json:"nickname"`
+	RoomID   string `json:"roomid"`
+	RoomName string `json:"roomname"`
+}
+
+// Login realiza el login al API REST y maneja posibles errores
+func login(nickname string) LoginResponse {
+	apiURL := "http://localhost:8081/login"
+	// Crear el objeto LoginRequest
+	loginRequest := LoginRequest{
 		Nickname: nickname,
+		X_GoChat: "http://localhost:8081",
 	}
 
-	// Convertir el loginReq a JSON
-	reqBody, err := json.Marshal(loginReq)
+	// Convertir la solicitud a JSON
+	jsonData, err := json.Marshal(loginRequest)
 	if err != nil {
-		return nil, fmt.Errorf("error al convertir la solicitud de login a JSON: %v", err)
+		fmt.Printf("Error al serializar LoginRequest: %v\n", err)
+		return LoginResponse{
+			Status:  "nok",
+			Message: "Error al preparar la solicitud.",
+		}
 	}
 
-	// Hacer la solicitud POST al API REST
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(reqBody))
+	// Crear la solicitud HTTP POST
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/login", apiURL), bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("error al realizar solicitud POST: %v", err)
+		fmt.Printf("Error al crear la solicitud HTTP: %v\n", err)
+		return LoginResponse{
+			Status:  "nok",
+			Message: "Error al preparar la solicitud HTTP.",
+		}
+	}
+
+	// Añadir encabezados
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-gochat", apiURL)
+
+	// Enviar la solicitud
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("Error al realizar la solicitud HTTP: %v\n", err)
+		return LoginResponse{
+			Status:  "nok",
+			Message: "El servidor GoChat no está disponible. Disculpe las molestias.",
+		}
 	}
 	defer resp.Body.Close()
 
-	// Leer la respuesta
-	var loginResp LoginResponse
-	err = json.NewDecoder(resp.Body).Decode(&loginResp)
+	// Leer el cuerpo de la respuesta
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error al leer la respuesta del API REST: %v", err)
+		fmt.Printf("Error al leer la respuesta: %v\n", err)
+		return LoginResponse{
+			Status:  "nok",
+			Message: "Error al leer la respuesta del servidor.",
+		}
 	}
-	fmt.Printf("Respuesta del login: %s\n", loginResp)
-	return &loginResp, nil
+
+	// Parsear la respuesta JSON
+	var loginResponse LoginResponse
+	err = json.Unmarshal(body, &loginResponse)
+	if err != nil {
+		fmt.Printf("Error al deserializar la respuesta: %v\n", err)
+		return LoginResponse{
+			Status:  "nok",
+			Message: "Error al procesar la respuesta del servidor.",
+		}
+	}
+
+	// Retornar la respuesta parseada o con valores por defecto
+	if loginResponse.Status == "" {
+		loginResponse.Status = "nok"
+	}
+	if loginResponse.Message == "" {
+		loginResponse.Message = "Error desconocido."
+	}
+	if loginResponse.Nickname == "" {
+		loginResponse.Nickname = nickname
+	}
+
+	return loginResponse
 }
 
 func createStreamWithoutConflict(js nats.JetStreamContext, streamName string, subjects []string) (string, error) {
@@ -744,17 +796,14 @@ func main() {
 	}
 
 	// Realizar login y obtener token, roomId y roomName
-	loginResp, err := login(nickname)
-	if err != nil {
-		log.Fatalf("Error durante el login: %v", err)
-	}
+	loginResp := login(nickname)
 
 	if loginResp.Status == "ok" {
 		// Mostrar la información del login
-		fmt.Printf("Login exitoso: NickName: %s Token: %s, RoomID: %s, RoomName: %s\n", loginResp.Nickname, loginResp.Token, loginResp.Roomid, loginResp.Roomname)
+		fmt.Printf("Login exitoso: NickName: %s Token: %s, RoomID: %s, RoomName: %s\n", loginResp.Nickname, loginResp.Token, loginResp.RoomID, loginResp.RoomName)
 
 		// Conectar a NATS y enviar/recibir mensajes
-		nc := connectToNATS(loginResp.Token, loginResp.Roomid, loginResp.Roomname, loginResp.Nickname)
+		nc := connectToNATS(loginResp.Token, loginResp.RoomID, loginResp.RoomName, loginResp.Nickname)
 		if nc != nil {
 			// Crear contexto de JetStream
 			js, err := nc.JetStream()
@@ -765,7 +814,7 @@ func main() {
 			fmt.Println("Voy a obtener a los usuarios activos")
 
 			// Llamar a iniciarGestionUsuarios
-			responseChannel, errorChannel := iniciarGestionUsuarios(js, loginResp.Nickname, loginResp.Roomid, loginResp.Token)
+			responseChannel, errorChannel := iniciarGestionUsuarios(js, loginResp.Nickname, loginResp.RoomID, loginResp.Token)
 
 			// Manejar respuestas y errores
 			select {

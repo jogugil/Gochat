@@ -95,11 +95,11 @@ func main() {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"}, // --123-- ojo!! Debemos Cambiar esto en producción para especificar orígenes. MEor mediante variabl entorno.
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "x-gochat"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "x_gochat"},
 		AllowCredentials: true,
 	}))
 
-	// Middleware para verificar el encabezado x-gochat
+	// Middleware para verificar el encabezado x_gochat
 	r.Use(func(c *gin.Context) {
 		// Excluir ciertas rutas del chequeo (por ejemplo: /status y /metrics)
 		if c.Request.URL.Path == "/status" || c.Request.URL.Path == "/metrics" {
@@ -107,29 +107,48 @@ func main() {
 			return
 		}
 
-		goChatHeader := c.GetHeader("x-gochat")
+		// Ver todas las cabeceras que llegan
+		log.Printf("Main: Cabeceras recibidas: %+v", c.Request.Header)
+
+		// Verifica sMAini la cabecera x_gochat está presente
+		goChatHeader := c.GetHeader("x_gochat")
 		if goChatHeader == "" {
+			log.Printf("Cabecera 'x_gochat' no encontrada.")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  "nok",
-				"message": "Cliente no aceptado: Falta 'x-gochat' en el encabezado",
+				"message": "Cliente no aceptado: Falta 'x_gochat' en el encabezado",
 			})
 			c.Abort()
 			return
 		}
-		log.Printf("Servidor: goChatHeader recibido: %s", goChatHeader)
+
+		log.Printf("Main: Servidor: goChatHeader recibido: %s", goChatHeader)
 		c.Next()
 	})
 
 	// Crear instancias de los servicios
 	statusService := api.NewStatusService()
 	metricsService := api.NewMetricsService()
-
+	// Ruta prueba conexión xon el servidor Gochat
+	// Definir la ruta para la URL raíz '/'
+	r.GET("/", func(c *gin.Context) {
+		// Responder con un mensaje JSON
+		c.JSON(http.StatusOK, gin.H{
+			"message": "ok",
+		})
+	})
 	// Rutas para monitoreo o métricas
 	r.GET("/status", statusService.Status)
 	r.GET("/metrics", metricsService.Metrics)
 
 	// Rutas de login y logout
-	r.POST("/login", api.LoginHandler)
+	r.POST("/login", func(c *gin.Context) {
+		// Verificar que la solicitud de login está llegando
+		log.Printf("Main: Solicitud de login recibida en /login")
+		log.Printf("Main: Cabeceras recibidas: %+v", c.Request.Header)
+		// Llamar al controlador de login
+		api.LoginHandler(c)
+	})
 	r.POST("/logout", api.LogoutHandler)
 
 	// Configurar el servidor
