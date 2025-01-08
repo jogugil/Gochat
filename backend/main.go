@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"github.com/gin-contrib/cors"
+
 	"github.com/gin-gonic/gin"
 )
 

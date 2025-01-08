@@ -15,7 +15,7 @@ import BannerCloud from './BannerCloud';
 import prohibitedWords from "./prohibitedWords";
 import { getClientInformation } from '../utils/ClientData'; // Ajusta la ruta según tu estructura de carpetas
 import {NatsStreamManager, VITE_MAINROOM_CLIENT_TOPIC, VITE_GET_USERS_TOPIC} from '../comm/WebNatsManager';
-const [currentTime, setCurrentTime] = useState<string>('');
+ 
 
 const Clock = () => {
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -123,6 +123,7 @@ const Chat = () => {
   //Conexión servidor mensjaeria (Nats|Kafka)
   const [natsManager, setNatsManager] = useState<NatsStreamManager | null>(null);
   const [connectionError, setConnectionError] = useState<boolean>(false); // Estado para el error de conexión
+  const [shouldConnectToNats, setShouldConnectToNats] = useState(false);
 
   // Controlo input envío de mensjaes
   // Tipo explícito para las claves válidas
@@ -217,17 +218,24 @@ const connectToNats = async () => {
       console.error('Usuario no autenticado. No se puede conectar a NATS.');
       return;
     }
-  
-    const manager = new NatsStreamManager();
-  
+   
     try {
-      await manager.connect();
-      setNatsManager(manager);
-      setConnectionError (false)
-      console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
-      // Asignar el callback handleNatsMessage a un consumidor para el topic 'principal.client'
-      manager.assignCallbackToConsumer('principal.client', handleNatsMessage(setMessages));
+      if (natsManager){
+        await natsManager.connect();
 
+        setConnectionError (false)
+        console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
+        // Asignar el callback handleNatsMessage a un consumidor para el topic 'principal.client'
+        natsManager.subscribe('principal.client', handleNatsMessage(setMessages));
+
+        setConnectionError (false)
+        console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
+        // Asignar el callback handleNatsMessage a un consumidor para el topic 'principal.client'
+        natsManager.subscribe('principal.client', handleNatsMessage(setMessages)); 
+
+      } else {
+        console.error('No se pudo conectar a NATS. El objeto natsManager nulo');  
+      }
     } catch (error) {
       console.error('Error al conectar al servidor Nde mensajeria Nats');
       setConnectionError (true)
@@ -318,6 +326,7 @@ const loadAliveUsers = async () => {
   };
  
   const authenticateUser = async ()=> {
+    console.log("Dentro de authenticateUser:")
     try {
       if (nickName && roomId && roomName && token) {
         const user = new User(nickName, 'Alive', roomId, roomName, token);
@@ -325,6 +334,7 @@ const loadAliveUsers = async () => {
         setIsMessageSendable(true);
         setIsAuthenticated(true);
         console.log('Usuario autenticado:', user);
+        console.log('Usuario autenticado: IsAuthenticated:', isAuthenticated);
       } else {
         throw new Error('Datos del usuario no válidos');
       }
@@ -358,11 +368,38 @@ const loadAliveUsers = async () => {
   // UseEffect para crear userChat
   useEffect(() => {
     if (nickName && roomId && roomName && token && !isAuthenticated) {
-      authenticateUser ();
-      connectToNats ();
+      authenticateUser ();      
     }
   }, [nickName, roomId, roomName, token, isAuthenticated]);
 
+ //UseEffect para inicializar la conexión al servidor de mensajeria nats
+  useEffect(() => {
+  // Cuando isAuthenticated cambia a true, activamos la conexión a NATS
+  console.log("Dentro de useEffect setShouldConnectToNats.");
+  console.log("isAuthenticated:", isAuthenticated);
+  console.log("natsManager:", natsManager);
+  if (isAuthenticated) {
+    console.log("isAuthenticated cambió a true. Preparándose para conectar a NATS...");
+    const manager = new NatsStreamManager();
+    setNatsManager(manager);
+    setShouldConnectToNats(true);
+  }
+}, [isAuthenticated]);
+
+useEffect(() => {
+  console.log("Dentro de useEffect conexion Nats.");
+  console.log("isAuthenticated:", isAuthenticated);
+  console.log("shouldConnectToNats:", shouldConnectToNats);
+  console.log("natsManager:", natsManager);
+  if (shouldConnectToNats && natsManager && !natsManager.isConnected) {
+    console.log("Conectando a NATS...");
+    connectToNats();
+  } else {
+    console.log("No se conecta a NATS porque no cumple las condiciones.");
+  }
+}, [shouldConnectToNats, natsManager]);
+
+  // UseEffect para inicializar la sala
   useEffect(() => {
     initializeRoom();
   }, [initialized]); // Este useEffect depende de initialized
@@ -385,7 +422,7 @@ const loadAliveUsers = async () => {
               console.log("Se llaman a las funciones que obtienen los mensajes de la sala y los primeros usuarios activos");
               startUpdates (); // Activa los mensajes periódicos
         }
- }, [room?._roomid]);
+  }, [room?._roomid]);
 
   useEffect(() => {
     if (connectionError) {
