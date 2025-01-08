@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getMessages, sendMessage, getAliveUsers } from '../api/api';
+import { sendMessage, getAliveUsers,handleNatsMessage } from '../api/api';
 import { useAuth } from './AuthContext';  // Importamos el contexto de autenticación
 import { Room } from '../models/Room';
 import { Message, UUID } from "../models/Message";
@@ -14,7 +14,7 @@ import BannerProgramming from './BannerProgramming';
 import BannerCloud from './BannerCloud';
 import prohibitedWords from "./prohibitedWords";
 import { getClientInformation } from '../utils/ClientData'; // Ajusta la ruta según tu estructura de carpetas
-import {NatsStreamManager} from '../comm/WebNatsManager';
+import {NatsStreamManager, VITE_MAINROOM_CLIENT_TOPIC, VITE_GET_USERS_TOPIC} from '../comm/WebNatsManager';
 const [currentTime, setCurrentTime] = useState<string>('');
 
 const Clock = () => {
@@ -46,32 +46,25 @@ const Chat = () => {
 
   const navigate = useNavigate(); //Navegar por la web de Gochat
 
-  //WebSocket
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const apiIP          = import.meta.env.VITE_IP_SERVER_GOCHAT;
-  const apiPORT        = import.meta.env.VITE_PORT_SERVER_GOCHAT;
-  const socketUrl      = `ws://${apiIP}:${apiPORT}/ws`;
-  // Referencias para las instancias de WebSocketManager
- 
-  const [isUserSocketConnected, setIsUserSocketConnected] = useState(false);
-  const [isMessageSocketConnected, setIsMessageSocketConnected] = useState(false);
+  const [isMessageSendable, setIsMessageSendable] = useState(false);       // Para habilitar/deshabilitar input y botón
+  const [messages, setMessages] = useState<Map<string, { nickname: string; message: string }>>(new Map());
 
-  const [isMessageSendable, setIsMessageSendable] = useState(false); // Para habilitar/deshabilitar input y botón
-  const [messages, setMessages]         = useState<Message[]> ([]);        // Estado para los mensajes
   const [messageText, setMessageText]   = useState<string> ('');           // Estado para el texto del mensaje
   const [aliveUsers, setAliveUsers]     = useState<string[]> ([]);         // Estado para los usuarios activos
- 
  
   //Control scroll zona central
   const [scrollToBottomFlag, setScrollToBottomFlag] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
   // Función para desplazarse al final del contenedor de mensajes
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
   //Ventana de error /información
   const [errorQueue, setErrorQueue] = useState<string[]>([]);
   const [minimized, setMinimized]       = useState (false);
+
   const closeErrorMessage = () => {
     setErrorQueue((prevQueue) => {
       // Eliminar el primer mensaje de la cola
@@ -113,8 +106,8 @@ const Chat = () => {
     setIsDarkMode(!isDarkMode);
   };
   
-    // Timeout definido en el archivo de entorno (.env). Cada cuanto tiempo el polling realia la petición de mensajes/usuarios
-    const timeout = parseInt(import.meta.env.VITE_POLLING_TIMEOUT, 10 ) || 2000;
+  // Timeout definido en el archivo de entorno (.env). Cada cuanto tiempo el polling realia la petición de mensajes/usuarios
+  const timeout = parseInt(import.meta.env.VITE_POLLING_TIMEOUT, 10 ) || 2000;
  
   //Logica de usuario y chat
   const { token, nickName, roomId, roomName } = useAuth();  // Obtener el usuario y el token del contexto
@@ -122,12 +115,15 @@ const Chat = () => {
   const [room, setRoom]                       = useState<Room | null>(null);  // Estado para el objeto Room
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [initialized, setInitialized]         = useState<boolean>(false);
-  const [startPolling, setStartPolling]       = useState<boolean>(false);
   const [showError, setShowError]             = useState(false);
   const [errorMessage, setErrorMessage]       = useState('');
   const [isErrorActive, setIsErrorActive]     = useState(false);
   const intervalIdRef = useRef<number | null>(null);
-  
+
+  //Conexión servidor mensjaeria (Nats|Kafka)
+  const [natsManager, setNatsManager] = useState<NatsStreamManager | null>(null);
+  const [connectionError, setConnectionError] = useState<boolean>(false); // Estado para el error de conexión
+
   // Controlo input envío de mensjaes
   // Tipo explícito para las claves válidas
   type EscapeChar = "<" | ">" | "&" | "\"" | "'";
@@ -176,11 +172,14 @@ const Chat = () => {
  
             return;
           }
-
-          const response = await sendMessage(userChat.nickname, userChat.token, room.roomId, room.roomName, messageText);
+          if (natsManager) {
+            const response = await sendMessage(natsManager, userChat.nickname, userChat.token, room.roomId, room.roomName, messageText);
+          } else {
+            console.error("No se pudo enviar el mensaje. No existe conexión con Nats");
+          }
+          
           setMessageText(''); // Limpiamos el input
-          // Despues de enviar un mensaje actualizamos la lsita de mensajes para mostrar y de usuarios
-          updateData();
+        
         }
       } catch (err) {
         showErrorModal('No se pudo enviar el mensaje. Intente de nuevo.');
@@ -191,22 +190,52 @@ const Chat = () => {
    
 };
 
-// Función para realizar ambas tareas: Petición listado de mensajes y listado de usuarios
-const updateData = async () => {  // Añadir async si loadMessages y loadAliveUsers son asincrónicas
+ 
+// Función que se ejecuta después de la autenticación
+const updateData = async () => {
+  if (isAuthenticated && natsManager?.isConnected && room) {
     try {
-      console.log("Cargando mensajes del chat...");
-      await loadMessages();  // Asumimos que loadMessages es asincrónica
-  
-      console.log("Cargando usuarios activos...");
-      await loadAliveUsers();  // Asumimos que loadAliveUsers es asincrónica
+      // Llamamos a getLastMessagesFromTopic desde NATSManager
+      const lastMessages = await natsManager?.getLastMessagesFromTopic(VITE_MAINROOM_CLIENT_TOPIC, 100); // Asume que room es el topic
+      
+      // Creamos un Map de mensajes (suponiendo que lastMessages es un array de objetos)
+      const newMessages = new Map<string, { nickname: string; message: string }>();
+      lastMessages.forEach((msg: { nickname: string; message: string }, index: number) => {
+        newMessages.set(index.toString(), msg);
+      });
+
+      // Actualizamos el estado con los nuevos mensajes
+      setMessages(newMessages);
     } catch (error) {
-      showErrorModal(`Error durante la actualización periódica: ${error}`);
-      console.error("Error durante la actualización periódica:", error);
+      console.error('Error al obtener los mensajes:', error);
+    }
+  }
+};
+
+const connectToNats = async () => {
+    if (!isAuthenticated || !userChat) {
+      console.error('Usuario no autenticado. No se puede conectar a NATS.');
+      return;
+    }
+  
+    const manager = new NatsStreamManager();
+  
+    try {
+      await manager.connect();
+      setNatsManager(manager);
+      setConnectionError (false)
+      console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
+      // Asignar el callback handleNatsMessage a un consumidor para el topic 'principal.client'
+      manager.assignCallbackToConsumer('principal.client', handleNatsMessage(setMessages));
+
+    } catch (error) {
+      console.error('Error al conectar al servidor Nde mensajeria Nats');
+      setConnectionError (true)
     }
   };
-  
-// Función que realiza la actualización periódica
-const startPeriodicUpdates = ( ) => {
+
+// Función que realiza la actualización el listado inicial de mensajes y de usuarios activos
+const startUpdates = ( ) => {
   console.log("startPeriodicUpdates = ( ) => {"); 
   console.log("userChat:", userChat);
  
@@ -218,30 +247,26 @@ const startPeriodicUpdates = ( ) => {
     throw new Error('Usuario no disponible. Por favor, intente ingresar nuevamente más tarde.'); 
   }
 
-  // Ejecutar inmediatamente antes de iniciar el intervalo
-  updateData();
-
-  // Configurar la actualización periódica
-  if (intervalIdRef.current) {
-    clearInterval(intervalIdRef.current);  // Limpiar cualquier intervalo previo
-  }
-  // Configurar la actualización periódica
-  intervalIdRef.current = setInterval(() => {
-    console.log("Intervalo ejecutado");
-    updateData();
-  }, timeout) as unknown as number;  // Forzar tipo como `number`
+  
+  // Obtner listado de mensajes presentes en el topic:'principal.client'
+  // loadMessages();
 };
 
 //Función que proicesa el mensaje JSON del servidor GoChat. lista de usaurios activos
+// Debe ser la función de callcbak para el listado de usuarios activos. Nada más logarse 
+// 1. NAda mñas logarse se envia una petición para obtener todos los mensakes en el topic roomlistuser.server
+// 2. Se obtiene la lista de usuarios activos del servidor GoChat del topic <<nickname>>.client
+// 3. Se actualiza la pantalla de usuarios activos
+// 4. Se crea un consumidor para obtener loa usuarios nuevos y los que se dan de baja (funcionalidad no implementada en esta versión
 const loadAliveUsers = async () => {
     try {
       const datosCliente = await getClientInformation();
       console.log('Usuarios activos:datosCliente:', datosCliente);
-      if ( userChat &&  userSocketRef  &&  userSocketRef.current?.isConnected) {
-        const response = await getAliveUsers ( userSocketRef.current   , userChat.nickname, userChat.token, userChat.roomId, datosCliente );
+      if ( userChat &&  natsManager) {
+        // --123-- Aqui debe llegar el mensaje JSON del servidor GoChat. lista de usaurios activos Del topic ""userChat.nickname.client"""
       
         // Parsear la respuesta JSON
-        const data: ResponseUser = JSON.parse(response);  // Asegúrate de que la respuesta es un JSON
+        /*const data: ResponseUser = JSON.parse(response);  // --123-- Asegúrar de que la respuesta es un JSON. Tenmemos que deserializr elk objeto NatsMessage
         console.log('Usuarios activos:data :', data );
         console.log('Usuarios activos:data.data:', data.data);
         if (data.status === 'OK' && data.data) {
@@ -252,7 +277,7 @@ const loadAliveUsers = async () => {
         } else {
           showErrorModal(`Error al obtener usuarios activos: ${data.message}`);
           console.error('Error al obtener usuarios activos:', data.message);  // 'data.message' contiene el mensaje de error
-        }
+        }*/
       }     
     } catch (err) {
       showErrorModal('Error GRAVE al obtener los usuarios activos: ' + err); 
@@ -263,80 +288,11 @@ const loadAliveUsers = async () => {
  
   // Obtener mensajes históricos al cargar la página
   const loadMessages = async () => {
-    // Generar un UUID vacío para el primer request
-    const emptyUUID: UUID = "00000000-0000-0000-0000-000000000000";
+ 
   
     try {
-      console.log('loadMessages: userChat:', userChat);
-      console.log('loadMessages: room:', room);
-      
-      if (!room) {
-        // Mostrar una ventana emergente de error       
-        console.error('Error, no se creó el objeto room');
-        throw new Error('El servicio de chat no está disponible. Disculpe las molestias. Por favor, intente ingresar nuevamente más tarde.');
-      }
-  
-      const messageID = room.lastIDMessageId || emptyUUID;
-      console.log('loadMessages:messageID:', messageID);
-  
-      // Hacer la llamada a la API para obtener los mensajes
-      const datosCliente = await getClientInformation();
-      console.log('loadMessages:datosCliente:', datosCliente);
-  
-      if (userChat && messageSocketRef.current && messageSocketRef.current.isConnected) {
-        console.log('loadMessages: datosCliente:', datosCliente);
-     
-        // Obtener los mensajes pasando el WebSocketManager real
-        const messageList = await getMessages(
-          messageSocketRef.current,  // Accede a la instancia de WebSocketManager
-          userChat.nickname,
-          userChat.token,
-          userChat.roomId,
-          userChat.roomName,
-          messageID,
-          datosCliente
-        );
-        
-        // Deserializar el JSON en un objeto Response
-        const response: Response = JSON.parse(messageList);
-  
-        // Acceder a los mensajes
-        console.log('loadMessages:messageList:', response);
-  
-        // Verificar si el status es 'NOK' y manejar el error adecuadamente
-        if (response.status === 'NOK') {
-          // Mostrar mensaje de error si el estado es 'NOK'
-          showErrorModal(response.message || 'Error desconocido al cargar los mensajes');
-          console.error('Error al cargar los mensajes:', response.message);
-          return;  // Salir de la función sin actualizar los mensajes
-        } else {
-          // Si 'response.data' está indefinido, es que no hay mensajes
-          if (!response.data) {
-            console.log('No se encontraron mensajes');
-           // setMessages([]);  // Establecer mensajes como un arreglo vacío
-            return;  // Salir de la función
-          }
-  
-          // Si la respuesta contiene mensajes, crear la lista de mensajes
-          const msgList: MessageResponse[] = response.data.map((msg: MessageResponse) => ({
-            messageid: msg.messageid,      // ID del mensaje
-            nickname: msg.nickname,        // Nombre del usuario
-            messagetext: msg.messagetext   // Contenido del mensaje
-          }));
-  
-          console.log('Mensajes activos:', msgList);
-  
-          // Ahora pasamos la lista de objetos al método updateMessages
-          room.updateMessages(msgList);
-          // Actualizar el estado de los mensajes
-          setMessages(room.messageList);
-          setScrollToBottomFlag(true);
-          console.log('Mensajes cargados:', room.messageList);
-        }
-      } else {
-        showErrorModal('No se pudo conectar al servicio de chat.');  
-        console.error('Socket no está conectado');
-      }
+    // Obtener mensajes históricos del servidor GoChat
+    updateData ();
     } catch (err) {
       showErrorModal('El Servicio de Chat está temporalmente cerrado. Intente logarse más tarde');
       console.error('Error al cargar los mensajes:', err);
@@ -384,11 +340,10 @@ const loadAliveUsers = async () => {
     console.log(
       "Se llama a initializeRoom. Valores actuales:\n" +
       `userChat: ${JSON.stringify(userChat)},\n` + 
-      `messageSocket.isConnected: ${messageSocketRef.current?.isConnected},\n` +
-      `userSocket.isConnected: ${userSocketRef.current?.isConnected},\n` +
+      `natsManager.isConnected: ${natsManager?.isConnected},\n` +
       `initialized: ${initialized}`
     );
-    if (userChat && messageSocketRef.current?.isConnected && userSocketRef.current?.isConnected) {
+    if (userChat && natsManager?.isConnected) {
       const roomU = new Room(userChat.roomId, userChat.roomName);
       setRoom(roomU);
       console.log('Sala creada:', roomU);
@@ -403,7 +358,8 @@ const loadAliveUsers = async () => {
   // UseEffect para crear userChat
   useEffect(() => {
     if (nickName && roomId && roomName && token && !isAuthenticated) {
-      authenticateUser();
+      authenticateUser ();
+      connectToNats ();
     }
   }, [nickName, roomId, roomName, token, isAuthenticated]);
 
@@ -411,86 +367,29 @@ const loadAliveUsers = async () => {
     initializeRoom();
   }, [initialized]); // Este useEffect depende de initialized
 
+  // Este useEffect comienza updates una vez que userChat, room y nats.connect estén listos
   useEffect(() => {
-    const connectWebSocket = async () => {
-      try {
-        // Instancia WebSocketManager con un callback para manejar el error
-        messageSocketRef.current = new WebSocketManager(socketUrl, 'messagesSocket', (error: string) => {
-          setConnectionError(error);  // Guardamos el error de conexión en el estado
-        });
-        userSocketRef.current = new WebSocketManager(socketUrl, 'usersSocket', (error: string) => {
-          setConnectionError(error);
-        });
-
-        // Pasar el callback de onOpen desde React
-        userSocketRef.current.setOnOpenCallback(() => {
-          console.log('User socket connected');
-          setIsUserSocketConnected(true); // Marca como conectado
-        });
-
-        messageSocketRef.current.setOnOpenCallback(() => {
-          console.log('Message socket connected');
-          setIsMessageSocketConnected(true); // Marca como conectado
-        });
-
-      } catch (error: unknown) {
-        if (error instanceof Error) {
-          setConnectionError(error.message);
-        } else {
-          setConnectionError('Error desconocido al conectar al WebSocket');
-        }
-      }
-    };
-  
-    connectWebSocket();
-  
-    return () => {
-      if (userSocketRef.current && typeof userSocketRef.current.close === 'function') {
-        userSocketRef.current.close();
-      }
-      if (messageSocketRef.current && typeof messageSocketRef.current.close === 'function') {
-        messageSocketRef.current.close();
-      }
-    };
-  }, [socketUrl])
-
-  // Este useEffect comienza los updates periódicos una vez que userChat, room y WebSocket estén listos
-  useEffect(() => {
-    // Solo ejecutar startPeriodicUpdates cuando userChat, room, y el WebSocket estén listos
-    if (userChat && userSocketRef.current?.isConnected && messageSocketRef.current?.isConnected && !initialized) {
+    // Solo ejecutar startUpdates cuando userChat, room, y el WebSocket estén listos
+    if (userChat && natsManager?.isConnected && !initialized) {
       console.log("Se llaman setInitialized para poder crear el objeto room");
  
       if (!initialized) setInitialized(true);  // Marca como inicializado para evitar ejecuciones futuras     
-
+      
     }  else {
       console.log("No se llamo a setInitialized porque initialized:",initialized);
     }
-  }, [userChat, userSocketRef.current?.isConnected, messageSocketRef.current?.isConnected])
+  }, [userChat, natsManager?.isConnected])
 
   useEffect(() => {
-        if (userChat && userSocketRef.current?.isConnected && messageSocketRef.current?.isConnected && initialized) {
-           if (!startPolling) {
-              console.log("Se llaman los updates periódicos del chat");
-              startPeriodicUpdates( ); // Activa los mensajes periódicos
-              setStartPolling (true); 
-          }  else {
-            console.log(" No pudo llamarse a startPolling...");
-          }
-          
+        if (userChat && natsManager?.isConnected && initialized) {
+              console.log("Se llaman a las funciones que obtienen los mensajes de la sala y los primeros usuarios activos");
+              startUpdates (); // Activa los mensajes periódicos
         }
-          
-        // Limpiar el intervalo cuando el componente se desmonte
-         // Limpiar intervalo cuando el componente se desmonta
-        return () => {
-          if (intervalIdRef.current) {
-              clearInterval(intervalIdRef.current);
-          }
-        };
-  }, [room?._roomid]);
+ }, [room?._roomid]);
 
   useEffect(() => {
     if (connectionError) {
-      showErrorModal ("Error en la conexión con el servidor. Espere unos isntantes.");
+      showErrorModal ("Error en la conexión con el servidor. Espere unos isntantes y vuelva a logarse.");
     }
   }, [connectionError]);
   
@@ -502,15 +401,15 @@ const loadAliveUsers = async () => {
 
 
   // Asegúrate de que tanto el usuario como el WebSocket y la sala estén listos antes de mostrar el chat
-  if (!userChat || !userSocketRef.current?.isConnected || !messageSocketRef.current?.isConnected || !room) {
+  if (!userChat || !natsManager?.isConnected || !room) {
     return <div>Cargando...</div>; // O cualquier otro indicador de que el chat no está listo
   }
   else{
     return (
       <div className="chat-container">
         <div className="chat-left-column">
-          <div className="chat-title">ChatSphere</div>
-          <div className="chat-subtitle">GoChat ZeroMQ</div>
+          <div className="chat-title">Gochat</div>
+          <div className="chat-subtitle">GoChat ZeroMQ//Nats</div>
            
           <div className="chat-logo-container">
             <div className="chat-logo">
@@ -543,13 +442,13 @@ const loadAliveUsers = async () => {
               </div>
               <h3>Mensajes</h3>
               <ul>
-                {messages.map((msg, index) => (
-                  <li key={index}>
+                {Array.from(messages.entries()).map(([id, msg], index) => (
+                  <li key={id}>
                     <strong>{msg.nickname}</strong>: {msg.message}
                   </li>
                 ))}
-                </ul>
-                <div ref={messagesEndRef} />
+              </ul>
+              <div ref={messagesEndRef} />
             </div>
   
             <div className="input-section">
@@ -584,7 +483,7 @@ const loadAliveUsers = async () => {
         <div className="chat-right-column">
           <div className="chat-metricsbox">
             <Clock />
-            <p><strong>Mensajes enviados:</strong> {messages.length}</p>
+            <p><strong>Mensajes enviados:</strong> {messages.size}</p>
             <p><strong>Usuarios activos:</strong> {aliveUsers.length}</p>
           </div>
           <div className="chat-active-users-box">
