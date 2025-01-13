@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -19,6 +20,7 @@ import (
 // Estructura para el cuerpo de la solicitud POST al API REST
 type LoginRequest struct {
 	Nickname string `json:"nickname"`
+	X_GoChat string `json:"x_gochat"`
 }
 
 // Definimos el tipo MessageType como int
@@ -68,10 +70,6 @@ type LoginResponse struct {
 	Nickname string `json:"nickname"`
 	Roomid   string `json:"roomid"`
 	Roomname string `json:"roomname"`
-}
-type Offsets struct {
-	lowOffset  int64
-	highOffset int64
 }
 
 // Estructura para los usuarios activos
@@ -262,20 +260,46 @@ func GetTopics(config map[string]interface{}) ([]string, error) {
 
 // Función para realizar el login al API REST
 func Login(nickname string, apiURL string) (*LoginResponse, error) {
-	loginReq := LoginRequest{
+
+	// Crear el objeto LoginRequest
+	loginRequest := LoginRequest{
 		Nickname: nickname,
+		X_GoChat: "http://localhost:8081",
 	}
 
-	// Convertir el loginReq a JSON
-	reqBody, err := json.Marshal(loginReq)
+	// Convertir la solicitud a JSON
+	jsonData, err := json.Marshal(loginRequest)
 	if err != nil {
-		return nil, fmt.Errorf("error al convertir la solicitud de login a JSON: %v", err)
+		fmt.Printf("Error al serializar LoginRequest: %v\n", err)
+		return &LoginResponse{
+			Status:  "nok",
+			Message: "Error al preparar la solicitud.",
+		}, fmt.Errorf("error al preparar la solicitud")
 	}
 
-	// Hacer la solicitud POST al API REST
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(reqBody))
+	// Crear la solicitud HTTP POST
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/login", apiURL), bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("error al realizar solicitud POST: %v", err)
+		fmt.Printf("Error al crear la solicitud HTTP: %v\n", err)
+		return &LoginResponse{
+			Status:  "nok",
+			Message: "Error al preparar la solicitud HTTP.",
+		}, fmt.Errorf("error al preparar la solicitud HTTP")
+	}
+
+	// Añadir encabezados
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x_GoChat", apiURL)
+
+	// Enviar la solicitud
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("Error al realizar la solicitud HTTP: %v\n", err)
+		return &LoginResponse{
+			Status:  "nok",
+			Message: "El servidor GoChat no está disponible. Disculpe las molestias.",
+		}, fmt.Errorf("el servidor GoChat no está disponible. Disculpe las molestias")
 	}
 	defer resp.Body.Close()
 
@@ -419,6 +443,7 @@ func GetTopicMessageCount(bs *BrokerKafka, topic string) (map[int32]int64, error
 
 	return partitionMessageCount, nil
 }
+
 func GetPartitionOffsets(bs *BrokerKafka, topic string, partition int32) (struct {
 	lowOffset  int64
 	highOffset int64
@@ -478,48 +503,72 @@ func CalculateMessagesPerPartition(partitionMessageCount map[int32]int64, numMes
 }
 func ReadMessagesFromPartitions(bs *BrokerKafka, topic string, partitionMessagesNeeded map[int32]int) ([]KafkaMessage, error) {
 	var messages []KafkaMessage
+	var mu sync.Mutex // Protege la lista de mensajes
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(partitionMessagesNeeded))
 
 	for partition, needed := range partitionMessagesNeeded {
-		// Obtener los offsets de la partición
-		offsets, err := GetPartitionOffsets(bs, topic, partition)
-		if err != nil {
-			return nil, fmt.Errorf("error obteniendo offsets para partición %d: %v", partition, err)
-		}
+		wg.Add(1)
+		go func(partition int32, needed int) {
+			defer wg.Done()
 
-		// Calcular el offset de inicio
-		startOffset := offsets.highOffset - int64(needed)
-		if startOffset < offsets.lowOffset {
-			startOffset = offsets.lowOffset
-		}
-
-		// Crear un Reader para la partición
-		r := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:     bs.brokers,
-			Topic:       topic,
-			Partition:   int(partition),
-			StartOffset: startOffset,
-			MinBytes:    10e3,
-			MaxBytes:    10e6,
-		})
-		defer r.Close()
-
-		// Leer los mensajes desde el offset inicial
-		for i := 0; i < needed; i++ {
-			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-			defer cancel()
-
-			msg, err := r.ReadMessage(ctx)
+			// Obtener los offsets de la partición
+			offsets, err := GetPartitionOffsets(bs, topic, partition)
 			if err != nil {
-				return nil, fmt.Errorf("error leyendo mensaje de partición %d: %v", partition, err)
+				errCh <- fmt.Errorf("error obteniendo offsets para partición %d: %v", partition, err)
+				return
 			}
 
-			kafkaMsg := KafkaMessage{
-				Key:       string(msg.Key),
-				Value:     string(msg.Value),
-				Headers:   ConvertKafkaHeadersToMap(msg.Headers),
-				Timestamp: msg.Time,
+			// Calcular el offset de inicio
+			startOffset := offsets.highOffset - int64(needed)
+			if startOffset < offsets.lowOffset {
+				startOffset = offsets.lowOffset
 			}
-			messages = append(messages, kafkaMsg)
+
+			// Crear un Reader para la partición
+			r := kafka.NewReader(kafka.ReaderConfig{
+				Brokers:     bs.brokers,
+				Topic:       topic,
+				Partition:   int(partition),
+				StartOffset: startOffset,
+				MinBytes:    10e3,
+				MaxBytes:    10e6,
+			})
+			defer r.Close()
+
+			// Leer los mensajes desde el offset inicial
+			var partitionMessages []KafkaMessage
+			for i := 0; i < needed; i++ {
+				ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+				msg, err := r.ReadMessage(ctx)
+				cancel()
+				if err != nil {
+					errCh <- fmt.Errorf("error leyendo mensaje de partición %d: %v", partition, err)
+					return
+				}
+
+				partitionMessages = append(partitionMessages, KafkaMessage{
+					Key:       string(msg.Key),
+					Value:     string(msg.Value),
+					Headers:   ConvertKafkaHeadersToMap(msg.Headers),
+					Timestamp: msg.Time,
+				})
+			}
+
+			// Agregar mensajes de esta partición a la lista principal
+			mu.Lock()
+			messages = append(messages, partitionMessages...)
+			mu.Unlock()
+		}(partition, needed)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	// Si hubo errores, devolver el primero
+	for err := range errCh {
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -582,7 +631,6 @@ func ConsumeLastMessages(bs *BrokerKafka, topic string, numMessages int) ([]Kafk
 	log.Printf("ConsumeLastMessages: Se obtuvieron %d mensajes de topic: %s\n", len(messages), topic)
 	return messages, nil
 }
-
 func ConvertKafkaHeadersToMap(kafkaHeaders []kafka.Header) map[string]interface{} {
 	headersMap := make(map[string]interface{})
 	for _, h := range kafkaHeaders {
@@ -801,14 +849,14 @@ func SendMessageChat(bs *BrokerKafka, topic string, kafkaMessage KafkaMessage) e
 // Función para iniciar el consumidor en un hilo separado
 func StartConsumingMessages(bs *BrokerKafka, topic string, responseChannel chan *sarama.ConsumerMessage, stopChannel chan struct{}) {
 	go func() {
-		// Verificar si el consumidor ya existe
+		// Verificar si el consumidor ya existe y no está cerrado
 		if bs.consumer == nil {
 			log.Println("Error: No hay un consumidor disponible.")
 			close(responseChannel)
 			return
 		}
 
-		// Usar el consumidor existente para consumir el tópico
+		// Intentar crear un consumidor para la partición
 		partitionConsumer, err := bs.consumer.ConsumePartition(topic, 0, sarama.OffsetOldest)
 		if err != nil {
 			log.Printf("Error creando consumer para %s: %v", topic, err)

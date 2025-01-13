@@ -1,7 +1,7 @@
 package main
 
 import (
-	"Gochat/clients/clkafka"
+	"clkafka/clkafka"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const apiURL = "http://localhost:8081/login" // Cambia esta URL a la de tu servidor REST
+const apiURL = "http://localhost:8081" // Cambia esta URL a la de tu servidor REST
 
 // CargarConfig lee un archivo JSON y devuelve el mapa de configuración
 func LoadConfig(filePath string) (map[string]interface{}, error) {

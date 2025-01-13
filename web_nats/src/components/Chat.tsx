@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { sendMessage, getAliveUsers,handleNatsMessage } from '../api/api';
+import { sendMessage, handleKafkaGetAliveUsers, handleKafkaMessage } from '../api/api';
 import { useAuth } from './AuthContext';  // Importamos el contexto de autenticación
 import { Room } from '../models/Room';
 import { Message, UUID } from "../models/Message";
@@ -14,9 +14,8 @@ import BannerProgramming from './BannerProgramming';
 import BannerCloud from './BannerCloud';
 import prohibitedWords from "./prohibitedWords";
 import { getClientInformation } from '../utils/ClientData'; // Ajusta la ruta según tu estructura de carpetas
-import {NatsStreamManager, VITE_MAINROOM_CLIENT_TOPIC, VITE_GET_USERS_TOPIC} from '../comm/WebNatsManager';
+import {KafkaManager, VITE_MAINROOM_TOPIC, VITE_GET_USERS_TOPIC} from '../comm/WebNatsManager';
  
-
 const Clock = () => {
   const [currentTime, setCurrentTime] = useState<string>('');
 
@@ -121,9 +120,9 @@ const Chat = () => {
   const intervalIdRef = useRef<number | null>(null);
 
   //Conexión servidor mensjaeria (Nats|Kafka)
-  const [natsManager, setNatsManager] = useState<NatsStreamManager | null>(null);
+  const [kafkaManager, setKafkaManager] = useState<KafkaManager | null>(null);
   const [connectionError, setConnectionError] = useState<boolean>(false); // Estado para el error de conexión
-  const [shouldConnectToNats, setShouldConnectToNats] = useState(false);
+  const [shouldConnectToKafka, setShouldConnectToKafka] = useState(false);
 
   // Controlo input envío de mensjaes
   // Tipo explícito para las claves válidas
@@ -173,8 +172,8 @@ const Chat = () => {
  
             return;
           }
-          if (natsManager) {
-            const response = await sendMessage(natsManager, userChat.nickname, userChat.token, room.roomId, room.roomName, messageText);
+          if (kafkaManager) {
+            const response = await sendMessage(kafkaManager, userChat.nickname, userChat.token, room.roomId, room.roomName, messageText);
           } else {
             console.error("No se pudo enviar el mensaje. No existe conexión con Nats");
           }
@@ -194,44 +193,56 @@ const Chat = () => {
  
 // Función que se ejecuta después de la autenticación
 const updateData = async () => {
-  if (isAuthenticated && natsManager?.isConnected && room) {
+  if (isAuthenticated && kafkaManager?.isConnected && room) {
     try {
-      // Llamamos a getLastMessagesFromTopic desde NATSManager
-      const lastMessages = await natsManager?.getLastMessagesFromTopic(VITE_MAINROOM_CLIENT_TOPIC, 100); // Asume que room es el topic
-      
-      // Creamos un Map de mensajes (suponiendo que lastMessages es un array de objetos)
+      const fullTopic = `${VITE_MAINROOM_TOPIC}.client`;
+      const lastMessages = await kafkaManager?.getAllMessagesFromTopic(fullTopic, 100);
+
+      // Crea un Map con la estructura correcta
       const newMessages = new Map<string, { nickname: string; message: string }>();
-      lastMessages.forEach((msg: { nickname: string; message: string }, index: number) => {
-        newMessages.set(index.toString(), msg);
+
+      // Itera sobre los mensajes obtenidos (lastMessages)
+      lastMessages.forEach((message, nickname) => {
+        // Asegúrate de que el valor del Map sea un objeto con nickname y message
+        newMessages.set(nickname, { nickname, message });
       });
 
-      // Actualizamos el estado con los nuevos mensajes
-      setMessages(newMessages);
+      setMessages(newMessages);  // Actualiza el estado
     } catch (error) {
       console.error('Error al obtener los mensajes:', error);
     }
   }
 };
 
-const connectToNats = async () => {
+const connectToKafka = async () => {
     if (!isAuthenticated || !userChat) {
       console.error('Usuario no autenticado. No se puede conectar a NATS.');
       return;
     }
    
     try {
-      if (natsManager){
-        await natsManager.connect();
+      if (!kafkaManager){
+        // Verifica que nickname esté disponible y sea válido
+        const initializeKafkaManager = async () => {
+          if (userChat.nickname) {
+            try {
+              // Crear kafkaManager con el nickname
+              const createdKafkaManager = await KafkaManager.create(userChat.nickname);
+              
+              // Actualiza el estado de kafkaManager
+              setKafkaManager(createdKafkaManager);
 
-        setConnectionError (false)
-        console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
-        // Asignar el callback handleNatsMessage a un consumidor para el topic 'principal.client'
-        natsManager.subscribe('principal.client', handleNatsMessage(setMessages));
+              console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
+             
 
-        setConnectionError (false)
-        console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
-        // Asignar el callback handleNatsMessage a un consumidor para el topic 'principal.client'
-        natsManager.subscribe('principal.client', handleNatsMessage(setMessages)); 
+            } catch (error) {
+              console.error('Error al crear KafkaManager:', error);
+            }
+          }
+        };
+
+        initializeKafkaManager();
+        setShouldConnectToKafka(true);
 
       } else {
         console.error('No se pudo conectar a NATS. El objeto natsManager nulo');  
@@ -241,7 +252,19 @@ const connectToNats = async () => {
       setConnectionError (true)
     }
   };
+const pushCallback = async () => {
+  if (kafkaManager && userChat) {
+    // Asignar el callback handleKafkaMessage a un consumidor para el topic 'principal.client'
+    kafkaManager.startConsumerCallback('principal.client', handleKafkaMessage(setMessages));
+    console.log('Callback asignado para el consumidor principal.client');
+ 
+    // Asignar el callback handleKafkaGetAliveUsers a un consumidor para el topic 'principal.client'
+    const topicroomuserlist = `${userChat.nickname}.client`;
+    kafkaManager.startConsumerCallback( topicroomuserlist, handleKafkaGetAliveUsers(setAliveUsers));
+    console.log('Callback asignado para el consumidor <nickname>.client');
+  }
 
+}
 // Función que realiza la actualización el listado inicial de mensajes y de usuarios activos
 const startUpdates = ( ) => {
   console.log("startPeriodicUpdates = ( ) => {"); 
@@ -270,7 +293,7 @@ const loadAliveUsers = async () => {
     try {
       const datosCliente = await getClientInformation();
       console.log('Usuarios activos:datosCliente:', datosCliente);
-      if ( userChat &&  natsManager) {
+      if ( userChat &&  kafkaManager) {
         // --123-- Aqui debe llegar el mensaje JSON del servidor GoChat. lista de usaurios activos Del topic ""userChat.nickname.client"""
       
         // Parsear la respuesta JSON
@@ -350,10 +373,10 @@ const loadAliveUsers = async () => {
     console.log(
       "Se llama a initializeRoom. Valores actuales:\n" +
       `userChat: ${JSON.stringify(userChat)},\n` + 
-      `natsManager.isConnected: ${natsManager?.isConnected},\n` +
+      `natsManager.isConnected: ${kafkaManager?.isConnected},\n` +
       `initialized: ${initialized}`
     );
-    if (userChat && natsManager?.isConnected) {
+    if (userChat && kafkaManager?.isConnected) {
       const roomU = new Room(userChat.roomId, userChat.roomName);
       setRoom(roomU);
       console.log('Sala creada:', roomU);
@@ -365,6 +388,9 @@ const loadAliveUsers = async () => {
       handleSendMessage();
     }
   };
+  ///////////////////////////////////
+  // CONTROL CHAT.TSX
+  //////////////////////////////////////
   // UseEffect para crear userChat
   useEffect(() => {
     if (nickName && roomId && roomName && token && !isAuthenticated) {
@@ -372,32 +398,29 @@ const loadAliveUsers = async () => {
     }
   }, [nickName, roomId, roomName, token, isAuthenticated]);
 
- //UseEffect para inicializar la conexión al servidor de mensajeria nats
+ //UseEffect para inicializar la conexión al servidor de mensajeria KAFKA
   useEffect(() => {
-  // Cuando isAuthenticated cambia a true, activamos la conexión a NATS
-  console.log("Dentro de useEffect setShouldConnectToNats.");
+  // Cuando isAuthenticated cambia a true, activamos la conexión a KAFKA
+  console.log("Dentro de useEffect activamos la conexión a KAFKA.");
   console.log("isAuthenticated:", isAuthenticated);
-  console.log("natsManager:", natsManager);
-  if (isAuthenticated) {
-    console.log("isAuthenticated cambió a true. Preparándose para conectar a NATS...");
-    const manager = new NatsStreamManager();
-    setNatsManager(manager);
-    setShouldConnectToNats(true);
+  console.log("kafkaManager:", kafkaManager);
+  if (isAuthenticated && userChat && userChat?.nickname != '') {
+    connectToKafka ();
+    
   }
 }, [isAuthenticated]);
 
 useEffect(() => {
-  console.log("Dentro de useEffect conexion Nats.");
+  console.log("Dentro de useEffect conexion Callcback.");
   console.log("isAuthenticated:", isAuthenticated);
-  console.log("shouldConnectToNats:", shouldConnectToNats);
-  console.log("natsManager:", natsManager);
-  if (shouldConnectToNats && natsManager && !natsManager.isConnected) {
-    console.log("Conectando a NATS...");
-    connectToNats();
+  console.log("shouldConnectToNats:", shouldConnectToKafka);
+  console.log("kafkaManager:", kafkaManager);
+  if (shouldConnectToKafka && kafkaManager && !kafkaManager.isConnected) {
+    pushCallback ();
   } else {
-    console.log("No se conecta a NATS porque no cumple las condiciones.");
+    console.log("No se conecta a Kafka porque no cumple las condiciones.");
   }
-}, [shouldConnectToNats, natsManager]);
+}, [shouldConnectToKafka, kafkaManager]);
 
   // UseEffect para inicializar la sala
   useEffect(() => {
@@ -407,7 +430,7 @@ useEffect(() => {
   // Este useEffect comienza updates una vez que userChat, room y nats.connect estén listos
   useEffect(() => {
     // Solo ejecutar startUpdates cuando userChat, room, y el WebSocket estén listos
-    if (userChat && natsManager?.isConnected && !initialized) {
+    if (userChat && kafkaManager?.isConnected && !initialized) {
       console.log("Se llaman setInitialized para poder crear el objeto room");
  
       if (!initialized) setInitialized(true);  // Marca como inicializado para evitar ejecuciones futuras     
@@ -415,10 +438,10 @@ useEffect(() => {
     }  else {
       console.log("No se llamo a setInitialized porque initialized:",initialized);
     }
-  }, [userChat, natsManager?.isConnected])
+  }, [userChat, kafkaManager?.isConnected])
 
   useEffect(() => {
-        if (userChat && natsManager?.isConnected && initialized) {
+        if (userChat && kafkaManager?.isConnected && initialized) {
               console.log("Se llaman a las funciones que obtienen los mensajes de la sala y los primeros usuarios activos");
               startUpdates (); // Activa los mensajes periódicos
         }
@@ -438,7 +461,7 @@ useEffect(() => {
 
 
   // Asegúrate de que tanto el usuario como el WebSocket y la sala estén listos antes de mostrar el chat
-  if (!userChat || !natsManager?.isConnected || !room) {
+  if (!userChat || !kafkaManager?.isConnected || !room) {
     return <div>Cargando...</div>; // O cualquier otro indicador de que el chat no está listo
   }
   else{
@@ -446,7 +469,7 @@ useEffect(() => {
       <div className="chat-container">
         <div className="chat-left-column">
           <div className="chat-title">Gochat</div>
-          <div className="chat-subtitle">GoChat ZeroMQ//Nats</div>
+          <div className="chat-subtitle">GoChat ZeroMQ//Nats</div>   
            
           <div className="chat-logo-container">
             <div className="chat-logo">

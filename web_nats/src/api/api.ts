@@ -1,8 +1,9 @@
 import axios from 'axios';
-import { UUID } from '../models/Message'; 
-import { LoginResponse } from '../types/typesComm';
+import { Message, UUID } from '../models/Message'; 
+import { LoginResponse, MessageType, Metadata } from '../types/typesComm';
 import {WebSocketManager} from '../comm/WebSocketManager';
-import { NatsStreamManager, NatsMessage} from 'comm/WebNatsManager';
+import { KafkaMessage} from '../types/typesComm';
+import { KafkaManager } from 'comm/WebNatsManager';
  
  
 const apiUrl = import.meta.env.VITE_API_URL; //'http://localhost:8081';
@@ -126,20 +127,28 @@ export const login_new = async (nickname: string): Promise<LoginResponse> => {
   };
  
 // Enviar mensajes al servidor GoChat utilizando NATS
-export const sendMessage = async (natsMessage: NatsStreamManager, nickName: string, token: string, roomId: string, roomName: string, message: string) => {
-  const requestData = {
-    nickname: nickName,           // Reemplaza con el nombre del usuario
-    roomid: roomId,               // ID de la sala
-    roomname: roomName,           // Nombre de la sala
-    tokensession: token,          // El token de sesión
-    message: message              // El mensaje que deseas enviar
+export const sendMessage = async (kafkaManager: KafkaManager, nickName: string, token: string, roomId: string, roomName: string, message: string) => {
+  const metadata: Metadata = {
+    ackStatus: true,           // Estado de confirmación
+    priority: 1,               // Prioridad del mensaje
+    originalLang: 'es',        // Idioma original
   };
+  const requestData = new Message(
+    nickName,                     // nombre de usuario
+    message,                      // el mensaje que deseas enviar
+    new Date().toISOString(),     // fecha de envío (sendDate)
+    roomId,                       // ID de la sala
+    token,                        // token de sesión
+    roomName,                     // nombre de la sala
+    metadata,                     // metadata (puede ser más detallada según lo necesites)
+    MessageType.TEXT              // messageType (tipo de mensaje)
+  );
 
   try {
     console.log(`sendMessage: Enviando mensaje al topic 'principal.server' con el contenido: ${message}`);
 
     // Usar NATS para enviar el mensaje
-    await natsMessage.sendNatsMessage(requestData, 'principal.server');  // Usar tu clase NatsStreamManager para enviar el mensaje
+    await kafkaManager.sendKafkaMessage (requestData, 'principal.server');  // Usar tu clase NatsStreamManager para enviar el mensaje
     
     console.log('Mensaje enviado correctamente a través de NATS.');
 
@@ -171,19 +180,19 @@ requestData := map[string]string{
 // Obtener mensajes. Función que realiza la petición para obtener los mensajes
 // Función para manejar la respuesta del WebSocket
 // Definir la función callback para procesar la respuesta
-const serializeMessage = (msg: NatsMessage): string => {
+const serializeMessage = (msg: KafkaMessage): string => {
   // Convertir el Uint8Array a base64 antes de serializar
   const serializedMsg = {
     ...msg,
-    data: btoa(String.fromCharCode(...msg.data)), // Convertir Uint8Array a base64
+    data: btoa(String.fromCharCode(...msg.value)), // Convertir Uint8Array a base64
   };
 
   // Serializar el objeto completo a JSON
   return JSON.stringify(serializedMsg);
 };
   
-// Función para deserializar el mensaje NatsMessage desde un string JSON
-const deserializeMessage = (jsonStr: string): NatsMessage => {
+// Función para deserializar el mensaje KafkaMessage desde un string JSON
+const deserializeMessage = (jsonStr: string): KafkaMessage => {
   const parsedMsg = JSON.parse(jsonStr);
 
   // Si hay un campo 'data', convertirlo de base64 a Buffer
@@ -194,20 +203,29 @@ const deserializeMessage = (jsonStr: string): NatsMessage => {
   return parsedMsg;
 };
 
-export const handleNatsMessage = (setMessages: React.Dispatch<React.SetStateAction<Map<string, { nickname: string; message: string }>>>) => {
-  return (msg: NatsMessage) => {
+export const handleKafkaMessage = (setMessages: React.Dispatch<React.SetStateAction<Map<string, { nickname: string; message: string }>>>) => {
+  return (msg: KafkaMessage) => {
     try {
-      // Deserializar el mensaje NATS
-      const messageData = JSON.parse(msg.data.toString());
+     
 
       // Acceder al campo 'nickname' de los headers y comprobar su tipo
       const nickname = msg.headers['nickname'];
+      const key = msg.key ?? Buffer.from('');  // Default if key is null or undefined
+      const value = msg.value ? Buffer.from(msg.value.toString()) : Buffer.from(''); // Default if value is null or undefined
+      
+      // Trazas de los atributos del mensaje
+      console.log('Nuevo mensaje recibido:');
+      console.log('  Key:', key.toString());  // Muestra la clave del mensaje
+      console.log('  Nickname:', nickname);  // Muestra el nickname del mensaje
+      console.log('  Value:', value.toString());  // Muestra el valor del mensaje
 
       if (typeof nickname === 'string') {
         // Si 'nickname' es una cadena, procesamos el mensaje
         setMessages((prevMessages) => {
+          console.log(`Procesando mensaje para el nickname: ${nickname}`);
+
           const newMessages = new Map(prevMessages); // Crear una copia del Map de mensajes
-          newMessages.set(nickname, { nickname, message: messageData }); // Agregar el nuevo mensaje
+          newMessages.set(nickname, { nickname, message: value.toString() }); // Agregar el nuevo mensaje
           return newMessages;
         });
       } else {
@@ -219,50 +237,33 @@ export const handleNatsMessage = (setMessages: React.Dispatch<React.SetStateActi
   };
 };
 
-
-  /*
-	requestData := struct {
-		RoomId      string `json:"roomid"`
-		TokenSesion string `json:"tokensesion"`
-		Nickname    string `json:"nickname"`
-		Operation   string `json:"operation"`
-		X_GoChat    string `json:"x_gochat"`
-	}{
-		RoomId:      idsala,
-		TokenSesion: token,
-		Nickname:    nickname,
-		Operation:   "listusers",
-		X_GoChat:    "http://localhost:8081",
-
-
-	}
-
-  		var aliveUsers []AliveUsers
-		for _, usuario := range usuarios {
-			aliveUsers = append(aliveUsers, AliveUsers{
-				Nickname:       usuario.Nickname,
-				LastActionTime: usuario.LastActionTime.Format("2006-01-02 15:04:05"), // Formato estándar de fecha y hora
-			})
-		}
-
-		// Preparar la respuesta
-		respChan <- ResponseUser{
-			Status:      "OK",
-			Message:     "Usuarios activos obtenidos correctamente.",
-			TokenSesion: requestData.TokenSesion,
-			Nickname:    requestData.Nickname,
-			RoomId:      requestData.RoomId,
-			AliveUsers:  aliveUsers,
-			X_GoChat:    urlClient,
-		}
-  */
-export const getAliveUsers = async (
-  socketManager: WebSocketManager, 
-  nickname: string, 
-  token: string, 
-  roomId: string, 
-  x_gochat: string
-) => {
-  
-  
+export const handleKafkaGetAliveUsers = (
+      setAliveUsers: React.Dispatch<React.SetStateAction<string[]>>
+    ) => {
+      return (msg: KafkaMessage) => {
+        try {
+          // Inicializar arreglo de usuarios activos
+          const aliveUsersList: string[] = [];
+    
+          // Obtener estado y lista de usuarios activos desde el mensaje
+          const status = msg.headers['status'];
+          const aliveUsers = msg.headers['aliveUsers'];
+    
+          // Validar estado y usuarios activos
+          if (status === "OK" && Array.isArray(aliveUsers)) {
+            // Extraer los nicknames
+            const nicknames = aliveUsers.map((user: any) => user.Nickname);
+            aliveUsersList.push(...nicknames);
+    
+            // Actualizar el estado
+            setAliveUsers(aliveUsersList);
+    
+            console.log("Usuarios activos actualizados:", aliveUsersList);
+          } else {
+            console.error("El mensaje no contiene usuarios activos válidos:", msg);
+          }
+        } catch (error) {
+          console.error("Error procesando el mensaje Kafka:", error);
+        }
+      };
 };

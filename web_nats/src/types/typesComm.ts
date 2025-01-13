@@ -2,8 +2,18 @@ import { UUID } from "../models/User";
 
 export const TOKEN_NULO = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwIiwidXNlcm5hbWUiOiJkZWZhdWx0IiwiZXhwIjoxNjk4Mzg2Mjc5fQ.MGkJd5EYHQffQ9jrUzX7Djgmd4mOuH3aPRvcOP61TnM";
  
-
-
+export interface KafkaMessage {
+  key: Buffer | null;  // Permitir que key sea null
+  value: Buffer;  // Asegurar siempre que value sea siempre un Buffer (nunca null)
+  timestamp: string;
+  headers: Record<string, string | Buffer<ArrayBufferLike> | (string | Buffer<ArrayBufferLike>)[] | undefined>;
+}
+export interface NatsMessage {
+  subject: string;   // topic name
+  data: Uint8Array;  // Asegurar siempre que value sea siempre un Buffer (nunca null)
+  timestamp: string;
+  headers: Record<string, string | Buffer<ArrayBufferLike> | (string | Buffer<ArrayBufferLike>)[] | undefined>;
+}
 export interface LoginResponse {
     status: string;
     message: string;
@@ -69,3 +79,43 @@ export interface JwtPayload {
     X_GoChat: string;
     data: AliveUser[];  // Aquí cambiamos 'AliveUsers' por 'Data' y es un arreglo de objetos AliveUser
   }
+
+  export interface RequestListuser  {
+    roomId: string; // UUID en formato de string
+    tokenSesion: string;
+    nickname: string;
+    message: string;
+    operation: string;
+    topic: string;
+    xGoChat: string;
+  };
+
+
+  // Enum para MessageType
+  export enum MessageType {
+    TEXT = 'text',
+    IMAGE = 'image',
+    VIDEO = 'video',
+    // Agrega otros tipos según sea necesario
+  };
+
+  // Interfaz Metadata
+  export interface Metadata {
+    ackStatus: boolean;  // Estado de confirmación
+    priority: number;    // Prioridad del mensaje
+    originalLang: string; // Idioma original
+  };
+
+  // Interfaz Message
+  export interface MessageData {
+    messageId: string;      // Identificador único (UUID)
+    messageType: MessageType; // Tipo de mensaje
+    sendDate: string;       // Fecha de envío (ISO string)
+    serverDate: string;     // Fecha en el servidor (ISO string)
+    nickname: string;       // Nombre del remitente
+    token: string;          // JWT del remitente
+    messageText: string;    // Contenido del mensaje
+    roomId: string;         // Sala destino (UUID)
+    roomName: string;       // Nombre de la sala
+    metadata: Metadata;     // Metadatos adicionales
+  };
