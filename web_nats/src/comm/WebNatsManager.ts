@@ -1,7 +1,8 @@
 // Uasar REST Proxy de Confluent para acceder al servidor de mensajeria kafka desde el navegador
 // Creación de un backend ligero que funcione a modo de proxy entre el cleinte y el servidor kafka
+ 
 
-import { connect, StringCodec, NatsConnection, JetStreamManager, JetStreamClient, RetentionPolicy, AckPolicy, MsgHdrs, headers ,  ConsumerOptsBuilder } from 'nats.ws';
+import { connect, StringCodec, NatsConnection, JetStreamManager, JetStreamClient, RetentionPolicy, AckPolicy, MsgHdrs, headers ,   DeliverPolicy, ReplayPolicy   } from 'nats.ws';
 import { RequestListuser, KafkaMessage, NatsMessage } from '../types/typesComm'; 
 import { Message, UUID } from "../models/Message";
 import { v4 as uuidv4 } from 'uuid';
@@ -15,9 +16,12 @@ export const VITE_GET_USERS_TOPIC = import.meta.env.VITE_GET_USERS_TOPIC || "roo
 export const VITE_NATS_PREFIX_STREAMNAME = import.meta.env.VITE_NATS_PREFIX_STREAMNAME || "MYGOCHAT_STREAM";
 
 // Estructura para almacenar productores y consumidores
+// Estructura para almacenar productores y consumidores con sus respectivos subjects
 interface NatsProducerConsumer {
-  producer: any;  // El productor para el stream
-  consumer: any;  // El consumidor para el stream
+  producer: any;       // El productor para el stream
+  consumer: any;       // El consumidor para el stream
+  producerSubject: string; // El subject asociado al productor
+  consumerSubject: string; // El subject asociado al consumidor
 }
 
 export class NatsManager {
@@ -34,14 +38,15 @@ export class NatsManager {
   }
 
   static async create(nickname: string | null): Promise<NatsManager> {
-    const urls: string[] = VITE_NATS_URLS.split(',');
+    const urls: string[] = VITE_NATS_URLS;
     const manager = new NatsManager();
     nickname = nickname || 'user-default';
     // Conectar automáticamente al inicializar la instancia
-    manager.connect(nickname, urls).catch((error) => {
+    await manager.connect(nickname, urls).catch((error) => {
           console.error('Error al conectar en el constructor:', error);
     })
-    
+    console.log ( `En final de create: Hemos creado los productores y consumidore `)
+    console.log (manager.producersConsumers)
     return manager;
   }
 
@@ -52,22 +57,27 @@ export class NatsManager {
   // Método para establecer la conexión a NATS y JetStream
   private async connect(nickname: string, urls: string[]): Promise<void> {
     try {
+      console.log('Iniciando conexión con NATS:', urls);
+  
       // Establecer la conexión
       this.nc = await connect({ servers: urls });
       console.log('Conexión establecida con NATS:', urls);
-
+  
       // Inicializar JetStream Manager y Cliente
       this.jsm = await this.nc.jetstreamManager();
       this.js = this.nc.jetstream();
-
+  
       if (this.jsm && this.js) {
         console.log('JetStream Manager y Client inicializados correctamente.');
       } else {
         throw new Error('Fallo al inicializar JetStream Manager o Client.');
       }
+  
       // Conectar y crear streams según el topic
-      await this.ensureTopicExists(VITE_MAINROOM_TOPIC, nickname);
-      await this.ensureTopicExists(VITE_GET_USERS_TOPIC, null);
+      console.log('Iniciando configuración de streams para los topics...');
+      await this.ensureTopicExists(VITE_MAINROOM_TOPIC, null);
+      await this.ensureTopicExists(VITE_GET_USERS_TOPIC, nickname);
+      console.log('Todos los streams y consumidores configurados.');
       this._isConnected = true;
     } catch (error) {
       console.error('Error al conectar con NATS:', error);
@@ -75,16 +85,27 @@ export class NatsManager {
     }
   }
 
-  ProducerConsumer(topic: string, producer: any, consumer: any): void {
-    this.producersConsumers.set(topic, { producer, consumer });
+  // Función para registrar productor y consumidor con sus respectivos subjects
+  public ProducerConsumer(topic: string, producer: any, consumer: any, producerSubject: string, consumerSubject: string): void {
+    this.producersConsumers.set(topic, { 
+      producer, 
+      consumer, 
+      producerSubject,   
+      consumerSubject    
+    });
   }
   public getProducerForTopic(topic: string): NatsProducerConsumer | undefined {
     return this.producersConsumers.get(topic)?.producer; // Usar `get` en lugar de corchetes
   }
-  public getConsumerForTopic(topic: string): NatsProducerConsumer | undefined {
-    return this.producersConsumers.get(topic)?.consumer; // Usar `get` en lugar de corchetes
+  public getProducerSubjectForTopic(topic: string): string {
+    return this.producersConsumers.get(topic)?.producerSubject ?? "defaultSubject";
   }
-
+  public getConsumerForTopic(topic: string): NatsProducerConsumer | undefined {
+    return this.producersConsumers.get(topic); // Usar `get` en lugar de corchetes
+  }
+  public getConsumerSubjectForTopic(topic: string): string {
+    return this.producersConsumers.get(topic)?.consumerSubject ?? "defaultConsumerSubject";
+  }
   private createNatsMessage(requestData: any, topic: string): NatsMessage {
     const headers = {
       roomId: requestData.roomid,
@@ -103,532 +124,467 @@ export class NatsManager {
   }
 
   // Verifica si un stream existe, si no, lo crea
+  // Verifica si un stream existe, si no, lo crea
   private async ensureTopicExists(topic: string, nickname: string | null): Promise<void> {
-    console.log(`ensureTopicExists: topic=${topic}, nickname=${nickname}`);
+    console.log(`ensureTopicExists iniciado: topic=${topic}, nickname=${nickname}`);
 
-    // Determinar productor y consumidor
-    const producerTopic = `${topic}.server`; // El productor siempre se conecta al topic.server
-    const consumerTopic = nickname ? `${nickname}.client` : `${topic}.client`; // El consumidor depende del nickname
+    const producerTopic = `${topic}.server`;
+    const consumerTopic = nickname ? `${nickname}.client` : `${topic}.client`;
 
     console.log(`Producer Topic: ${producerTopic}, Consumer Topic: ${consumerTopic}`);
 
-    // Crear o verificar ambos streams
     await Promise.all([
-      this.ensureStreamExists(producerTopic, topic, 'server'),
-      this.ensureStreamExists(consumerTopic, topic, 'client'),
+      await this.ensureStreamExists(producerTopic, topic, 'server'),
+      await this.ensureStreamExists(consumerTopic, topic, 'client'),
     ]);
+    console.log ( `Hemos creado el consu idor y productor del topic ${topic}`)
+    console.log (this.producersConsumers)
   }
 
   private async ensureStreamExists(topic: string, baseTopic: string, type: 'server' | 'client'): Promise<void> {
-    console.log(`ensureStreamExists: topic=${topic}, baseTopic=${baseTopic}, type=${type}`);
-    const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic}`;
+    console.log(`ensureStreamExists iniciado: topic=${topic}, baseTopic=${baseTopic}, type=${type}`);
+    let streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic}`;
+   
 
     try {
-      const stream = await this.jsm?.streams.info(streamName);
-      if (stream) {
-        console.log(`Stream para ${topic} ya existe: ${JSON.stringify(stream, null, 2)}`);
-      } else {
-        await this.createStream(streamName, baseTopic, type);
-      }
-    } catch (error) {
-      console.error(`Error al verificar o crear el stream para ${topic}:`, error);
+        console.log(`1. Verificando existencia del stream: ${streamName}`);
+        streamName = streamName.replace(/\./g, '_');  // Reemplazar puntos por guiones bajos
+        console.log(`2. Verificando existencia del stream: ${streamName}`);
+
+        // Intentar obtener el stream y verificar si existe
+        const stream = await this.jsm?.streams.info(streamName);
+
+        // Si el stream ya existe, asociamos el productor y consumidor
+        if (stream) {
+            console.log(`Stream ya existe: ${JSON.stringify(stream, null, 2)}`);
+            
+            // Obtener los productores y consumidores existentes del map
+            const existingEntry = this.producersConsumers.get(baseTopic) || { producer: null, consumer: null, producerSubject: "", consumerSubject: "" };
+
+            // Si el tipo es 'server', creamos el productor, y si es 'client', creamos el consumidor
+            if (type === 'server' && !existingEntry.producer) {
+                // Lógica para inicializar el productor si no existe
+                existingEntry.producer = await this.createProducer(streamName, type);
+                existingEntry.producerSubject = streamName;
+                console.log(`Productor asociado al stream ${streamName} con subject ${streamName}`);
+                existingEntry.consumer = existingEntry.consumer;
+                existingEntry.consumerSubject = existingEntry.consumerSubject;
+            } 
+            if (type === 'client' && !existingEntry.consumer) {
+                // Lógica para inicializar el consumidor si no existe
+                existingEntry.consumer = await this.createConsumer(streamName, type);
+                existingEntry.consumerSubject = streamName;
+                console.log(`Consumidor asociado al stream ${streamName} con subject ${streamName}`);
+                existingEntry.producer = existingEntry.producer;
+                existingEntry.producerSubject = existingEntry.producerSubject;
+            } 
+
+            // Asignar el productor o consumidor al baseTopic
+            console.log(`Asignamos el productor y/o consumidor al topic ${baseTopic} -- ${existingEntry}`);
+            this.producersConsumers.set(baseTopic, existingEntry);
+
+            return;  // Salir si el stream y los productores/consumidores están correctamente configurados
+        } else {
+            // Si el stream no existe, lo creamos y luego asociamos productor y consumidor
+            console.log(`Stream no encontrado. Procediendo a crear el stream: ${streamName}`);
+            await this.createStream(streamName, baseTopic, type);
+            console.log(`Stream creado. Procediendo a asociar productor y consumidor.`);
+
+            // Crear el productor o consumidor dependiendo del tipo
+            let producer, consumer;
+            let producerSubject, consumerSubject;
+
+            if (type === 'server') {
+                producer = await this.createProducer(streamName, type);
+                consumer = null;   
+                producerSubject = streamName;
+                consumerSubject = "";  
+            } else if (type === 'client') {
+                producer = null;   
+                consumer = await this.createConsumer(streamName, type);
+                producerSubject =  "";   
+                consumerSubject = streamName;
+            }
+
+            // Asociamos el productor o consumidor correspondiente
+            if (producer) {
+                this.producersConsumers.set(baseTopic, { producer, consumer: null, producerSubject: streamName, consumerSubject: "" });
+                console.log(`Productor creado y asociado al baseTopic ${baseTopic}`);
+            }
+            if (consumer) {
+                this.producersConsumers.set(baseTopic, { producer: null, consumer, producerSubject: "", consumerSubject: streamName});
+                console.log(`Consumidor creado y asociado al baseTopic ${baseTopic}`);
+            }
+        }
+    } catch (error: unknown) {
+        // Comprobamos si 'error' es un objeto y tiene la propiedad 'message'
+        if (this.isErrorWithMessage(error)) {
+            console.warn(`Error al verificar o crear el stream ${streamName} para el topic ${topic}:`, error.message);
+
+            // Si el error es específico de stream no encontrado, lo manejamos adecuadamente
+            if (error.message.includes('stream not found')) {
+                console.log(`El stream ${streamName} no fue encontrado, creando uno nuevo.`);
+                await this.createStream(streamName, baseTopic, type);
+            } else {
+                console.error("Error desconocido al verificar o crear el stream:", error.message);
+            }
+        } else {
+            console.error("Error desconocido al verificar o crear el stream:", error);
+        }
     }
+}
+
+private async createProducer(streamName: string, type: 'server' | 'client'): Promise<any> {
+    return {
+      publish: async (subject: string, data: Uint8Array) => {
+          console.log(`Publicando mensaje al subject: ${subject}`);
+          await this.js?.publish(subject, data);
+      },
+  };
+} 
+private async getProducer(streamName: string): Promise<any> {
+  console.log(`Obteniendo productor para el stream ${streamName}`);
+
+  // Devuelve un objeto productor para enviar mensajes
+  return {
+      publish: async (subject: string, data: Uint8Array) => {
+          console.log(`Publicando mensaje al subject: ${subject}`);
+          await this.js?.publish(subject, data);
+      },
+  };
+}
+private async createConsumer(streamName: string, type: 'server' | 'client'): Promise<any> {
+   
+  console.log(`Creando consumidor para el stream ${streamName} con tipo ${type}`);
+ 
+  await this.jsm?.consumers.add(streamName, {
+    durable_name: `${streamName}-consumer`,
+    ack_policy: AckPolicy.Explicit,
+    filter_subject: streamName,
+  });
+  console.log(`Consumidor registrado en JetStreamManager para el subject: ${streamName}`);
+
+  const consu = await this.js?.consumers.get(streamName, `${streamName}-consumer`);
+ 
+  return consu;
+}
+private async getConsumer(streamName: string, consumerName: string): Promise<any> {
+  const nc = await connect({ servers: "nats://localhost:4222" });
+  const js = nc.jetstream();
+
+  console.log(`Obteniendo consumidor para el stream ${streamName}, consumidor: ${consumerName}`);
+
+  const consu = await this.js?.consumers.get(streamName, `${streamName}-consumer`);
+  return consu;
+}
+
+  // Función de guardia para verificar si el error tiene la propiedad 'message'
+ private isErrorWithMessage(error: unknown): error is { message: string } {
+      return typeof error === 'object' && error !== null && 'message' in error;
   }
 
   // Crear un stream si no existe
   private async createStream(streamName: string, topic: string, type: 'server' | 'client') {
-    console.log(`createStream: streamName=${streamName}, topic=${topic}, type=${type}`);
+    console.log(`createStream iniciado: streamName=${streamName}, topic=${topic}, type=${type}`);
     try {
-      const streamWithPrefix = `${streamName}_CL`;
-
+      let streamWithPrefix = `${streamName}`;
+      streamWithPrefix = streamWithPrefix.replace(/\./g, '_');
       const config = {
         name: streamWithPrefix,
-        subjects: [`${topic}.*`],
-        retention: RetentionPolicy.Limits, // Usa el enum en lugar del string literal
+        subjects: [streamWithPrefix],
+        retention: RetentionPolicy.Limits,
         max_msgs_per_subject: 1000,
-        max_age: 60 * 60 * 1000, // Tiempo en milisegundos (1 hora)
+        //max_age: 60 * 60 * 1000,
       };
 
-      console.log(`Stream Config: ${JSON.stringify(config, null, 2)}`);
+      console.log(`Configuración del stream: ${JSON.stringify(config, null, 2)}`);
       await this.jsm?.streams.add(config);
-      console.log(`Stream para ${topic} creado con éxito: ${streamWithPrefix}`);
+      console.log(`Stream creado con éxito: ${streamWithPrefix}`);
 
-      // Crear productor y consumidor
       await this.createProducerConsumer(streamWithPrefix, topic, type);
     } catch (error) {
-      console.error(`Error al crear el stream para ${topic}:`, error);
+      console.error(`Error al crear el stream ${streamName} para el topic ${topic}:`, error);
     }
   }
-
+    
   // Crear un productor y un consumidor para un stream
   private async createProducerConsumer(streamName: string, topic: string, type: 'server' | 'client') {
-    console.log(`createProducerConsumer: streamName=${streamName}, topic=${topic}, type=${type}`);
-    const subject = `${topic}.${type}`;
+    console.log(`**** createProducerConsumer iniciado: streamName=${streamName}, topic=${topic}, type=${type}`);
+    const subject = streamName; //`${topic}.${type}`;
     console.log(`Subject generado: ${subject}`);
 
     try {
+      const existingEntry = this.producersConsumers.get(topic) || { producer: null, consumer: null,  producerSubject:"", consumerSubject:""};
       if (type === 'server') {
-        // Crear productor publicando un mensaje de prueba
+        console.log(`Creando productor para el subject: ${subject}`);
         await this.js?.publish(subject, Buffer.from('Mensaje de prueba'));
-        console.log(`Productor creado para el stream ${streamName}: ${subject}`);
+        console.log(`Productor creado para el subject: ${subject}`);
 
-        // Guardar el productor en el mapa
-        const existingEntry = this.producersConsumers.get(topic) || { producer: null, consumer: null };
-        if (existingEntry) {
-          this.producersConsumers.set(topic, {
-            producer: subject, // Mantener el productor existente
-            consumer:existingEntry.consumer, // Asignar el consumidor creado
-          });
-          console.log(`Productor creado y almacenado para el topic: ${topic}`);
-        } else {
-          this.producersConsumers.set(topic, {
-            producer: subject,  
-            consumer: null,  
-          });
-          console.log(`producersConsumers creado y almacenado para el topic: ${topic}`);
-        }
+       
+        this.producersConsumers.set(topic, {
+          producer: subject,
+          consumer: existingEntry.consumer,
+          producerSubject:streamName,
+          consumerSubject:existingEntry.consumerSubject,
+        });
+        console.log(`Productor almacenado para el topic: ${topic}`);
       } else {
-        // Crear consumidor con JetStreamManager primero
+        console.log(`Creando consumidor para el subject: ${subject}`);
         await this.jsm?.consumers.add(streamName, {
           durable_name: `${subject}-consumer`,
-          ack_policy: AckPolicy.Explicit, // Usar el valor de la enumeración
-          filter_subject: subject, // Filtro para este consumidor
+          ack_policy: AckPolicy.Explicit,
+          filter_subject: subject,
         });
+        console.log(`Consumidor registrado en JetStreamManager para el subject: ${subject}`);
 
-        console.log(`Consumidor registrado en JetStreamManager para el stream: ${streamName}, subject: ${subject}`);
-
-        // Asociar consumidor existente usando `bind`
-        const consumer = await this.js?.pullSubscribe(subject, {
-          config: {
-            durable_name: `${subject}-consumer`,
-          },
-        });
-
-        console.log(`Consumidor creado con pullSubscribe para el stream ${streamName}: ${subject}`);
-
+        const consumer = await this.js?.consumers.get(streamName, `${subject}-consumer`);
         if (consumer) {
-          const existingEntry = this.producersConsumers.get(topic) || { producer: null, consumer: null };
+          
           this.producersConsumers.set(topic, {
-            producer: existingEntry.producer, // Mantener el productor existente
-            consumer, // Asignar el consumidor creado
+            producer: existingEntry.producer,
+            consumer,
+            producerSubject:existingEntry.producerSubject,
+            consumerSubject:streamName ,
           });
-          console.log(`Consumidor creado y almacenado para el topic: ${topic}`);
+          console.log(`Consumidor almacenado para el topic: ${topic}`);
         }
-
-        // Iniciar pull del consumidor
-        consumer?.pull();
       }
     } catch (error) {
       console.error(`Error al crear productor o consumidor para el stream ${streamName} y topic ${topic}:`, error);
     }
   }
-  // Crear consumidor para un stream específico
-  async createConsumer(streamName: string, topic: string) {
-      console.log(`Creando consumidor para stream: ${streamName}, subject: ${topic}`);
-      const durableName = `durableName.${topic}`;
-      try {
-        console.log(`Creando consumidor con nats.ws y jsm (JsetStreamManager) : Stream=${streamName}, Subject=${topic}, Durable=${durableName}`);
-    
-        // Configurar el consumidor
-        await this.jsm?.consumers.add(streamName, {
-          durable_name: durableName,
-          ack_policy: AckPolicy.Explicit,
-          filter_subject: topic,
-        });
-    
-        console.log(`Consumidor creado exitosamente en nats.ws`);
-      } catch (error) {
-        console.error(`Error al crear el consumidor con nats.ws:`, error);
-      }
-      console.log(`Consumidor registrado en JetStreamManager para el stream ${streamName}, subject: ${topic}`);
 
+  
+  private createNatsMessageFromMessage(message: Message, topic: string): NatsMessage {
+    // Crear los headers del NatsMessage a partir del objeto Message
+    const headers: Record<string, string | Buffer> = {
+      messageId: message.messageId,
+      messageType: message.messageType,
+      sendDate: message.sendDate,
+      serverDate: message.serverDate,
+      nickname: message.nickname,
+      token: message.token,
+      roomId: message.roomId,
+      roomName: message.roomName,
+      metadata: JSON.stringify(message.metadata), // Convertir Metadata a string JSON
+    };
+
+    // Utilizar TextEncoder para convertir el texto a binario
+    const encoder = new TextEncoder();
+    const messageData = encoder.encode(message.messageText); // Convierte el texto en un Uint8Array
+
+    // Crear el NatsMessage
+    const natsMessage: NatsMessage = {
+      subject: topic, // El topic es el nombre del subject
+      data: messageData, // El contenido del mensaje como Uint8Array
+      timestamp: new Date().toISOString(), // Fecha y hora actuales como timestamp
+      headers: headers, // Los headers definidos
+    };
+
+    return natsMessage;
+  }
+
+  public async publishMessage(message: Message, topic: string): Promise<void> {
+    try {
+      console.log(`Entrando en publishMessage para el topic: ${topic}`);
+  
+      // Verificar que el productor esté disponible
+      const producer = this.getProducerForTopic(topic);
+      if (!producer) {
+        throw new Error(`No se encontró un productor para el topic: ${topic}`);
+      }
+      const producerSubject = this.getProducerSubjectForTopic (topic);
+      console.log("Productor encontrado:", producer);
+  
+      // Verificar que JetStream esté conectado
+      if (!this._isConnected) {
+        throw new Error("JetStream no está conectado");
+      }
+      try {
+         
+        console.log('Streams en await this.js?.views:', await this.js?.views);
+        console.log('Streams en await this.js?.views:', await this.js?.streams);
+      } catch (error) {
+        console.error('Error al obtener información de los streams de JetStream:', error);
+      }
+      // Transformar Message a NatsMessage
+      const natsMessage: NatsMessage = this.createNatsMessageFromMessage(message, topic);
+      console.log(`Mensaje transformado a NatsMessage: ${JSON.stringify(natsMessage)}`);
+  
+      // Crear los headers
+      const natsHeaders = headers();
+      for (const [key, value] of Object.entries(natsMessage.headers)) {
+        if (value !== undefined) {
+          if (Array.isArray(value)) {
+            value.forEach(v => {
+              if (typeof v === "string" || Buffer.isBuffer(v)) {
+                natsHeaders.append(key, v.toString());
+              }
+            });
+          } else if (typeof value === "string" || Buffer.isBuffer(value)) {
+            natsHeaders.set(key, value.toString());
+          }
+        }
+      }
+      
+      // Intentar publicar con reintentos
+      const MAX_RETRIES = 3;
+      let retries = 0;
+      let pubAck = null;
+  
+      while (retries < MAX_RETRIES) {
+        try {
+          pubAck = await this.js?.publish(producerSubject, natsMessage.data, {
+            headers: natsHeaders,
+          });
+  
+          if (pubAck?.seq) {
+            console.log(`Mensaje publicado con éxito en ${topic}. Seq: ${pubAck.seq}`);
+            return;
+          } else {
+            throw new Error("No se recibió un ack de la publicación.");
+          }
+        } catch (error) {
+          retries++;
+          if (retries >= MAX_RETRIES) {
+            console.error(`Error al publicar el mensaje en ${topic} después de ${MAX_RETRIES} intentos`, error);
+            break;
+          } else {
+            console.log(`Reintentando publicación en ${topic}... Intento ${retries}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error al publicar el mensaje en ${topic}:`, error);
+    }
+  }
+  
+  
+
+  // Enviar un mensaje de petición inicial de lsitado de usaurios 
+  private  createNatsMessageFromRequestListUsers (request: RequestListuser, topic: string): NatsMessage {
+    // Mapeamos los valores del request a los headers del NatsMessage
+    const headers: Record<string, string | Buffer> = {
+      roomId: request.roomId,
+      tokenSesion: request.tokenSesion,
+      nickname: request.nickname,
+      operation: request.operation,
+      xGoChat: request.xGoChat,
+    };
+
+    // Creamos el mensaje NatsMessage
+    const natsMessage: NatsMessage = {
+      subject: topic, // El subject será el topic proporcionado
+      data: Buffer.from(JSON.stringify({ message: request.message })), // Si necesitas incluir datos adicionales, puedes ajustarlo aquí
+      timestamp: new Date().toISOString(), // Fecha y hora actual como timestamp
+      headers: headers, // Los headers generados a partir del request
+    };
+
+    return natsMessage;
+  }
+  public async publisRequestListUsershMessage(message: RequestListuser, topic: string): Promise<void> {
+    try {
+      // Asegurarse de que el stream existe para el topic
+      await this.ensureTopicExists(topic, null);
+
+      // Obtener el productor asociado al topic-stream
+      const producer = this.getProducerForTopic(topic);
+      if (!producer) {
+        throw new Error(`No se encontró un productor para el topic: ${topic}`);
+      }
+
+      // Transformar Message a NatsMessage
+      const natsMessage: NatsMessage = this.createNatsMessageFromRequestListUsers (message, topic);
+
+      // Crear el objeto de headers estándar (sin MsgHdrs)
       
 
-      console.log(`Consumidor creado con pullSubscribe para el stream ${streamName}, subject: ${topic}`);
+      const natsHeaders = headers();
 
-      try {
-        console.log(`Vinculando consumidor existente con nats.ws: Durable=${durableName}`);
-    
-        const opts = ConsumerOptsBuilder.bind({ durable_name: durableName });
-        const consumer = await js.pullSubscribe(topic, opts);
-    
-        console.log(`Consumidor vinculado exitosamente con nats.ws`);
-        return consumer;
-      } catch (error) {
-        console.error(`Error al vincular el consumidor con nats.ws:`, error);
-        return undefined;
-      }
-
-      // Iniciar el proceso de extracción de mensajes (pull loop)
-      //this.startPullingMessages(topic);
-
-    } catch (error) {
-      console.error(`Error al crear el consumidor para stream: ${streamName}, subject: ${subject}`, error);
-    }
-  }
-  private createNatsMessageFromMessage(message: Message, topic: string): NatsMessage {
-  // Crear los headers del NatsMessage a partir del objeto Message
-  const headers: Record<string, string | Buffer> = {
-    messageId: message.messageId,
-    messageType: message.messageType,
-    sendDate: message.sendDate,
-    serverDate: message.serverDate,
-    nickname: message.nickname,
-    token: message.token,
-    roomId: message.roomId,
-    roomName: message.roomName,
-    metadata: JSON.stringify(message.metadata), // Convertir Metadata a string JSON
-  };
-
-  // Crear el NatsMessage
-  const natsMessage: NatsMessage = {
-    subject: topic, // El topic es el nombre del subject
-    data: Buffer.from(message.messageText), // El contenido del mensaje
-    timestamp: new Date().toISOString(), // Fecha y hora actuales como timestamp
-    headers: headers, // Los headers definidos
-  };
-
-  return natsMessage;
-}
-public async publishMessage(message: Message, topic: string): Promise<void> {
-  try {
-    // Asegurarse de que el stream existe para el topic
-    await this.ensureTopicExists(topic, null);
-
-    // Obtener el productor asociado al topic-stream
-    const producer = this.getProducerForTopic(topic);
-    if (!producer) {
-      throw new Error(`No se encontró un productor para el topic: ${topic}`);
-    }
-
-    // Transformar Message a NatsMessage
-    const natsMessage: NatsMessage = this.createNatsMessageFromMessage (message, topic);
-
-    // Crear el objeto de headers estándar (sin MsgHdrs)
-    
-
-    const natsHeaders = headers();
-
-    for (const [key, value] of Object.entries(natsMessage.headers)) {
-      if (value !== undefined) {
-        if (Array.isArray(value)) {
-          value.forEach(v => {
-            if (typeof v === "string" || Buffer.isBuffer(v)) {
-              natsHeaders.append(key, v.toString()); // Agregar valores múltiples a una misma clave
-            }
-          });
-        } else if (typeof value === "string" || Buffer.isBuffer(value)) {
-          natsHeaders.set(key, value.toString()); // Asignar un valor único a la clave
+      for (const [key, value] of Object.entries(natsMessage.headers)) {
+        if (value !== undefined) {
+          if (Array.isArray(value)) {
+            value.forEach(v => {
+              if (typeof v === "string" || Buffer.isBuffer(v)) {
+                natsHeaders.append(key, v.toString()); // Agregar valores múltiples a una misma clave
+              }
+            });
+          } else if (typeof value === "string" || Buffer.isBuffer(value)) {
+            natsHeaders.set(key, value.toString()); // Asignar un valor único a la clave
+          }
         }
       }
-    }
 
-    const pubAck = await this.js?.publish(natsMessage.subject, natsMessage.data, {
-      headers: natsHeaders, // Usa MsgHdrs aquí
-    });
-
-    console.log(`Mensaje publicado con éxito en ${topic}. Seq: ${pubAck?.seq}`);
-  } catch (error) {
-    console.error(`Error al publicar el mensaje en ${topic}:`, error);
-  }
-}
-
-// Enviar un mensaje de petición inicial de lsitado de usaurios 
-private  createNatsMessageFromRequestListUsers (request: RequestListuser, topic: string): NatsMessage {
-  // Mapeamos los valores del request a los headers del NatsMessage
-  const headers: Record<string, string | Buffer> = {
-    roomId: request.roomId,
-    tokenSesion: request.tokenSesion,
-    nickname: request.nickname,
-    operation: request.operation,
-    xGoChat: request.xGoChat,
-  };
-
-  // Creamos el mensaje NatsMessage
-  const natsMessage: NatsMessage = {
-    subject: topic, // El subject será el topic proporcionado
-    data: Buffer.from(JSON.stringify({ message: request.message })), // Si necesitas incluir datos adicionales, puedes ajustarlo aquí
-    timestamp: new Date().toISOString(), // Fecha y hora actual como timestamp
-    headers: headers, // Los headers generados a partir del request
-  };
-
-  return natsMessage;
-}
-public async publisRequestListUsershMessage(message: RequestListuser, topic: string): Promise<void> {
-  try {
-    // Asegurarse de que el stream existe para el topic
-    await this.ensureTopicExists(topic, null);
-
-    // Obtener el productor asociado al topic-stream
-    const producer = this.getProducerForTopic(topic);
-    if (!producer) {
-      throw new Error(`No se encontró un productor para el topic: ${topic}`);
-    }
-
-    // Transformar Message a NatsMessage
-    const natsMessage: NatsMessage = this.createNatsMessageFromRequestListUsers (message, topic);
-
-    // Crear el objeto de headers estándar (sin MsgHdrs)
-    
-
-    const natsHeaders = headers();
-
-    for (const [key, value] of Object.entries(natsMessage.headers)) {
-      if (value !== undefined) {
-        if (Array.isArray(value)) {
-          value.forEach(v => {
-            if (typeof v === "string" || Buffer.isBuffer(v)) {
-              natsHeaders.append(key, v.toString()); // Agregar valores múltiples a una misma clave
-            }
-          });
-        } else if (typeof value === "string" || Buffer.isBuffer(value)) {
-          natsHeaders.set(key, value.toString()); // Asignar un valor único a la clave
-        }
-      }
-    }
-
-    const pubAck = await this.js?.publish(natsMessage.subject, natsMessage.data, {
-      headers: natsHeaders, // Usa MsgHdrs aquí
-    });
-
-    console.log(`Mensaje publicado con éxito en ${topic}. Seq: ${pubAck?.seq}`);
-  } catch (error) {
-    console.error(`Error al publicar el mensaje en ${topic}:`, error);
-  }
-}
- 
- 
-// Función para iniciar un consumidor y asignar un callback
- 
-async startConsumerCallback(topic: string, callback: Function): Promise<void> {
-  try {
-    // Verificar si ya existe una suscripción para este tópico
-    const existingEntry = this.producersConsumers.get(topic);
-
-    if (existingEntry?.consumer) {
-      console.warn(`Ya existe un consumidor activo para el topic ${topic}.`);
-      return;
-    }
-
-    // Crear una nueva suscripción
-    const subscription = await this.nc?.subscribe(topic, {
-      callback: (err, msg) => {
-        if (err) {
-          console.error(`Error en el consumidor del topic ${topic}:`, err);
-          return;
-        }
-
-        // Procesar el mensaje con el callback proporcionado
-        callback(msg);
-      },
-    });
-
-    if (subscription) {
-      // Almacenar la suscripción y el callback
-      this.producersConsumers.set(topic, {
-        subscription,
-        callback,
+      const pubAck = await this.js?.publish(natsMessage.subject, natsMessage.data, {
+        headers: natsHeaders, // Usa MsgHdrs aquí
       });
-      console.log(`Callback asignado para el topic ${topic}.`);
-    }
-  } catch (error) {
-    console.error(`Error al iniciar el consumidor para el topic ${topic}:`, error);
-  }
-}
 
-// Función para detener un consumidor y su callback
-async stopConsumerCallback(topic: string) {
-  const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
-  const consumer = this.producersConsumers[streamName]?.consumer;
-
-  if (consumer) {
-    // Detenemos el consumidor y eliminamos el callback
-    await consumer.unsubscribe();
-    this.producersConsumers[streamName].callback = undefined;
-    console.log(`El consumidor para el topic ${topic} ha sido detenido y el callback ha sido eliminado.`);
-  } else {
-    console.error(`No se encontró consumidor para el topic ${topic}`);
-  }
-}
-
-// Función para iniciar un consumidor sin callback
-async startConsumer(topic: string) {
-  const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
-  const consumer = this.producersConsumers[streamName]?.consumer;
-
-  if (consumer) {
-    await consumer.pull();
-    console.log(`Consumidor iniciado para el topic ${topic}`);
-  } else {
-    console.error(`No se encontró consumidor para el topic ${topic}`);
-  }
-}
-
-// Función para detener un consumidor sin eliminar el callback
-async stopConsumer(topic: string) {
-  const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
-  const consumer = this.producersConsumers[streamName]?.consumer;
-
-  if (consumer) {
-    await consumer.unsubscribe();
-    console.log(`Consumidor detenido para el topic ${topic}`);
-  } else {
-    console.error(`No se encontró consumidor para el topic ${topic}`);
-  }
-}
-
-
-// Obtenemos histórico de menajes del tópic
-/*async getLastMessagesFromTopic(topic: string, limit: number = 100) {
-  const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
-  const consumer = this.producersConsumers[streamName]?.consumer;
-
-  if (consumer) {
-      try {
-          // Recuperar los últimos `limit` mensajes desde el stream
-          const result = await consumer.fetch({ maxMessages: limit });
-
-          console.log(result); // Ver la estructura del objeto
-
-          // Suponiendo que los mensajes están en un array llamado `messages`
-          const messages = result.messages || [];  // Asegúrate de acceder al array correctamente
-
-          console.log(`Recuperados ${messages.length} mensajes de ${streamName}`);
-          return messages;
-      } catch (error) {
-          console.error(`Error al obtener los mensajes del stream ${streamName}:`, error);
-          return [];
-      }
-  } else {
-      console.error(`No se encontró un consumidor para el topic ${topic}`);
-      return [];
-  }
-}
-// Función para enviar la solicitud a NATS para obtener los usuarios
-async sendGetUsers(request: any, topic: string) {
-  // Crear el objeto NATSMessage
-  const natsMessage: NatsMessage = {
-    subject: topic,  // El topic es el 'subject' del mensaje
-    data: Buffer.from(JSON.stringify(request)),  // Los datos de la solicitud van en 'data'
-    timestamp: new Date().toISOString(),  // Timestamp actual
-    headers: {  // Los atributos de la solicitud van en los 'headers'
-      RoomId: request.RoomId,
-      TokenSesion: request.TokenSesion,
-      Nickname: request.Nickname,
-      Operation: request.Operation,
-      X_GoChat: request.X_GoChat
-    }
-  };
-
-  try {
-    // Usar el productor de JetStream para enviar el mensaje
-    await this.producersConsumers[topic]?.producer?.publish(natsMessage);
-    console.log(`Mensaje enviado al topic ${topic}`);
-  } catch (error) {
-    console.error('Error al enviar el mensaje:', error);
-  }
-}*/
-  async getLastMessagesFromTopic(topic: string, limit: number = 10) {
-    if (!this.jsm) {
-      console.error("JetStreamManager no inicializado");
-      return [];
-    }
-
-    try {
-      const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split(".")[0]}`;
-      const consumerInfo = await this.jsm.consumers.info(streamName, topic);
-
-      if (consumerInfo) {
-        console.log(`Mensajes recuperados para ${topic}:`, consumerInfo);
-        return consumerInfo;
-      } else {
-        console.error(`No se encontró información del consumidor para ${topic}`);
-        return [];
-      }
+      console.log(`Mensaje publicado con éxito en ${topic}. Seq: ${pubAck?.seq}`);
     } catch (error) {
-      console.error(`Error al obtener mensajes históricos de ${topic}:`, error);
-      return [];
+      console.error(`Error al publicar el mensaje en ${topic}:`, error);
     }
-  }
-
-// Función para recibir un mensaje y ejecutar el callback asociado
-//sólo recibe un único menasaje, no es uns subscripción continua
-/*
- async receiveMessageFromStream(topic: string) {
-  const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
-  const consumer = this.producersConsumers[streamName]?.consumer;
+  } 
   
-  if (consumer) {
-      // Esperar el mensaje del consumidor
-      const msg = await consumer.fetch(); // O pull(), dependiendo de tu configuración
-
-      console.log(`Mensaje recibido de ${topic}:`, msg);
-
-      // Ejecutar el callback si está asignado
-      const callback = this.producersConsumers[streamName]?.callback;
-      if (callback) {
-          console.log(`Ejecutando callback para el topic ${topic}`);
-          callback(msg); // Llamar al callback con el mensaje recibido
-      } else {
-          console.error(`No se ha asignado un callback para el topic ${topic}`);
-      }
-  } else {
-      console.error(`No se encontró un consumidor para el stream ${streamName}`);
-  }
-}*/
-async receiveMessageFromStream(topic: string) {
-  const consumer = this.getConsumerForTopic(topic);
-  if (consumer) {
-    const msg = await consumer.fetch();  // Método de `fetch` en nats.ws
-    console.log(`Mensaje recibido de ${topic}:`, msg);
-
-    const callback = this.producersConsumers[topic]?.callback;
-    if (callback) {
-      callback(msg);
-    } else {
-      console.error(`No se ha asignado un callback para el topic ${topic}`);
-    }
-  } else {
-    console.error(`No se encontró un consumidor para el topic ${topic}`);
-  }
-}
-// Función para asignar un callback a un consumidor específico
-/*assignCallbackToConsumer(topic: string, callback: Function) {
-  const streamName = `${VITE_NATS_PREFIX_STREAMNAME}.${topic.split('.')[0]}`;
-  const consumer = this.producersConsumers[streamName]?.consumer;
-
-  if (consumer) {
-      // Asignamos el callback al consumidor
-      this.producersConsumers[streamName].callback = callback;
-      console.log(`Callback asignado al consumidor para el topic ${topic}`);
-  } else {
-      console.error(`No se encontró consumidor para el topic ${topic}`);
-  }
-}*/
-// Suscribirse a un topic con callback
-  async subscribe(topic: string, callback: (msg: NatsMessage) => void) {
-    if (!this.nc) {
-      console.error("No conectado a NATS");
-      return;
-    }
-
+  public async assignCallback(
+    topic: string,
+    callback: (err: Error | null, msg: any | null, sharedObject: any) => void,
+    sharedObject: any,
+    persist: boolean = false
+  ): Promise<void> {
+    console.log(`Entrando en assignCallback con el tema: "${topic}"`);
+  
     try {
-      const subscription = this.nc.subscribe(topic);
-      console.log(`Suscripción iniciada para el topic: ${topic}`);
-
-      for await (const msg of subscription) {
-        const data = JSON.parse(this.codec.decode(msg.data));
-        const natsMessage: NatsMessage = {
-          subject: msg.subject,
-          data: msg.data,
-          timestamp: new Date().toISOString(),
-          headers: {}, // Agregar headers si es necesario
-        };
-        callback(natsMessage);
+      // Obtener el consumidor configurado para el tema
+      const consumer = this.getConsumerForTopic(topic)?.consumer;
+  
+      if (!consumer) {
+        console.error(`No se encontró un consumidor para el tema: "${topic}"`);
+        throw new Error(`No se encontró un consumidor para el tema: ${topic}`);
       }
+      const consumerSubject = this.getConsumerSubjectForTopic (topic);
+      console.log(`Consumidor encontrado para el tema: "${topic} - subject: ${consumer.subject}- consumerSubject: ${consumerSubject} "`);
+  
+      // Consumir mensajes del consumidor
+      console.log(`Esperando mensajes para el tema: - subject: ${consumerSubject}`);
+  
+      await consumer.consume({
+        callback: (err: Error | null, msg: any) => {
+          if (err) {
+            console.error(
+              `Error al procesar mensaje en el tema "${consumerSubject}}":`,
+              err
+            );
+            callback(err, null, sharedObject);
+            return;
+          }
+  
+          if (msg) {
+            console.log(`Mensaje recibido para el tema "${consumerSubject}":`, msg);
+            callback(null, msg, sharedObject);
+  
+            // Si persist es false, cancelar la recepción de mensajes
+            if (!persist) {
+              console.log(
+                `Persistencia desactivada, deteniendo recepción para el tema: "${consumerSubject}"`
+              );
+              msg?.consumer?.close(); // Detener el consumidor si es posible
+            }
+          }
+        },
+      });
+  
+      console.log(`Callback asignado correctamente para el tema: "${topic}"`);
     } catch (error) {
-      console.error(`Error al suscribirse a ${topic}:`, error);
+      console.error(
+        `Error al asignar callback para el tema "${topic}":`,
+        error
+      );
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
-
+  
+  
+  
+  
+ 
 }

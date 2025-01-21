@@ -17,12 +17,13 @@ import (
 // BrokerNats representa un broker basado en NATS con soporte para JetStream.
 // Me guardio un vectior de subscripociones para en un futuro poder añadir funciones de administacion de topics
 type BrokerNats struct {
-	conn    *nats.Conn             // Conexión de NATS
-	js      nats.JetStreamContext  // Contexto para operaciones con JetStream
-	jsnats  bool                   // indica que usamos jetastrean en ntas par acontrol de persistencia en vez de nats bñasico
-	metrics sync.Map               // Para las métricas
-	adapter NatsTransformer        // Transformador Nats (si aplica)
-	config  map[string]interface{} // Configuración
+	conn           *nats.Conn             // Conexión de NATS
+	js             nats.JetStreamContext  // Contexto para operaciones con JetStream
+	jsnats         bool                   // Indica que usamos JetStream en lugar de NATS básico
+	metrics        sync.Map               // Para las métricas
+	adapter        NatsTransformer        // Transformador Nats (si aplica)
+	config         map[string]interface{} // Configuración
+	topicToSubject sync.Map               // Mapa de topics a subjects topic -> subject.
 }
 
 // NewNatsBroker inicializa un nuevo BrokerNats con JetStream.
@@ -79,6 +80,7 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 	if !ok {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: 'prefixStreamName' no está presente en la configuración de NATS")
 	}
+	log.Printf("[*]BrokerNats: topics:[%v]", topics)
 	// Crear un stream para cada topic
 	for _, topic := range topics {
 		err := utils.CreateStreamForTopic(js, prefixStreamName, topic) // Crear stream único por cada topic
@@ -99,7 +101,15 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 	}*/
 
 	log.Printf("[*]BrokerNats: dentro de for con el Tópics '%v'  \n", topics)
-
+	brock := &BrokerNats{
+		conn:           conn,
+		metrics:        sync.Map{},
+		adapter:        NatsTransformer{},
+		js:             js,
+		jsnats:         true,
+		config:         config,
+		topicToSubject: sync.Map{},
+	}
 	// Crear consumidores y productores para cada topic
 	for _, topic := range topics {
 		streamName := prefixStreamName + "_" + strings.ReplaceAll(topic, ".", "_")
@@ -115,7 +125,8 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 			// Verificar si el tópico está presente en el stream
 			topicExists := false
 			for _, subj := range streamInfo.Config.Subjects {
-				if subj == topic {
+				log.Printf("BrokerNats: subj(%s) - topic(%s)\n", subj, streamName)
+				if subj == streamName {
 					topicExists = true
 					break
 				}
@@ -123,7 +134,8 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 
 			// Si el tópico no existe, agregarlo al stream
 			if !topicExists {
-				streamInfo.Config.Subjects = append(streamInfo.Config.Subjects, topic)
+				log.Printf("BrokerNats: streamInfo.Config.Subjects '%s' topic '%s'\n", streamInfo.Config.Subjects, topic)
+				streamInfo.Config.Subjects = append(streamInfo.Config.Subjects, streamName) // el topic y el stream deben tener el mismo nombre
 				_, err = js.UpdateStream(&streamInfo.Config)
 				if err != nil {
 					conn.Close()
@@ -133,22 +145,23 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 			}
 
 			// Crear un productor para el tópico
-			err = utils.CreateProducer(js, topic, []byte{})
+			err = utils.CreateProducer(js, streamName, []byte{})
 			if err != nil {
 				conn.Close()
 				return nil, fmt.Errorf("BrokerNats: error al crear el productor para el tópico %s: %w ", topic, err)
 			}
-			log.Printf("BrokerNats: CreateProducer: Tópico '%s' agregado al stream '%s'\n", topic, streamName)
+			log.Printf("BrokerNats: CreateProducer: Tópico '%s' con nombre '%s' agregado al stream '%s'\n", topic, streamName, streamName)
 		} else if strings.HasSuffix(topic, ".server") {
 			prefix := strings.TrimSuffix(topic, ".server")
 			consumerName := fmt.Sprintf("%s-user-consumer", prefix)
 			log.Printf("BrokerNats: CreateConsumer '%s' : Tópico '%s' agregado al stream '%s'\n", consumerName, topic, streamName)
 			// Crear un consumidor solo para los temas terminados en .server
-			err := utils.CreateConsumer(js, streamName, consumerName, topic)
+			err := utils.CreateConsumer(js, streamName, consumerName, streamName) // el stream y el topic deben tener el mismo nombre. asoi evitamos problemas
 			if err != nil {
 				conn.Close()
 				return nil, fmt.Errorf("BrokerNats: error al crear el consumidor para el tópico %s: %w ", topic, err)
 			}
+			brock.AssignSubjectToTopic(topic, streamName)
 		} else {
 			log.Printf("BrokerNats: NewNatsBroker:  El tópico %s no corresponde a ninguna categoría conocida (.client o .server)\n", topic)
 		}
@@ -157,16 +170,22 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 	// Retornar instancia del broker
 	// ponemos en esta version jsnats:  true,  por defecto. Facilmente se peude añadir el fichero JSON
 
-	brock := &BrokerNats{
-		conn:    conn,
-		metrics: sync.Map{},
-		adapter: NatsTransformer{},
-		js:      js,
-		jsnats:  true,
-		config:  config,
-	}
 	log.Printf("BrokerNats: NewNatsBroker: Salgo de NewNatsBroker [%v]\n", brock)
 	return brock, nil
+}
+
+// Función para asociar un topic con su subject
+func (b *BrokerNats) AssignSubjectToTopic(topic string, subject string) {
+	b.topicToSubject.Store(topic, subject)
+}
+
+// Función para obtener el subject asociado con un topic
+func (b *BrokerNats) GetSubjectByTopic(topic string) (string, bool) {
+	value, ok := b.topicToSubject.Load(topic)
+	if ok {
+		return value.(string), true
+	}
+	return "", false
 }
 
 func (b *BrokerNats) OnMessage(topic string, callback func(interface{})) error {

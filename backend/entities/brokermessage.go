@@ -90,6 +90,11 @@ type MessageBroker interface {
 
 	// Devuelve count entities.Message del rtopic roomId
 	GetMessagesWithLimit(topic string, messageId uuid.UUID, count int) ([]Message, error)
+
+	// Función para asociar un topic con su subject
+	AssignSubjectToTopic(topic string, subject string)
+	// Función para obtener el subject asociado con un topic
+	GetSubjectByTopic(topic string) (string, bool)
 	// Cierra la conexión con el broker, liberando recursos.
 	Close() error
 }

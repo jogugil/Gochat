@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/IBM/sarama"
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ type BrokerKafka struct {
 	adapter         KafkaTransformer // Transformador para mensajes
 	brokers         []string         // Lista de brokers
 	config          map[string]interface{}
+	topicToSubject  sync.Map // Mapa de topics a subjects topic -> subject.
 }
 
 // NewKafkaBroker crea una nueva instancia de KafkaBroker.
@@ -90,6 +92,15 @@ func NewKafkaBroker(config map[string]interface{}) (MessageBroker, error) {
 		return nil, fmt.Errorf("BrokerKafka: NewKafkaBroker: error creando consumidor Kafka: %w", err)
 	}
 	var activeConsumers = make(map[string]sarama.PartitionConsumer)
+	// Retornar instancia del broker
+	brock := &BrokerKafka{
+		producer:        producer,
+		consumer:        consumer,
+		brokers:         brokerList,
+		activeConsumers: activeConsumers,
+		config:          config,
+		topicToSubject:  sync.Map{},
+	}
 	// Crear productores y consumidores según el sufijo del topic
 	for _, topic := range topics {
 		if strings.HasSuffix(topic, ".client") {
@@ -114,19 +125,27 @@ func NewKafkaBroker(config map[string]interface{}) (MessageBroker, error) {
 				return nil, fmt.Errorf("BrokerKafka: NewKafkaBroker error creando consumidor para el topic %s: %w", topic, err)
 			}
 			activeConsumers[topic] = consum
+			brock.AssignSubjectToTopic(topic, topic)
 		}
 	}
-	// Retornar instancia del broker
-	brock := &BrokerKafka{
-		producer:        producer,
-		consumer:        consumer,
-		brokers:         brokerList,
-		activeConsumers: activeConsumers,
-		config:          config,
-	}
-	log.Printf("BrokerNats: NewKafkaBroker: Salgo de NewNatsBroker [%v]\n", brock)
+
+	log.Printf("BrokerKafka: NewKafkaBroker: Salgo de NewNatsBroker [%v]\n", brock)
 	return brock, nil
 
+}
+
+// Función para asociar un topic con su subject
+func (b *BrokerKafka) AssignSubjectToTopic(topic string, subject string) {
+	b.topicToSubject.Store(topic, subject)
+}
+
+// Función para obtener el subject asociado con un topic
+func (b *BrokerKafka) GetSubjectByTopic(topic string) (string, bool) {
+	value, ok := b.topicToSubject.Load(topic)
+	if ok {
+		return value.(string), true
+	}
+	return "", false
 }
 
 // Implementación del método Publish para Kafka.

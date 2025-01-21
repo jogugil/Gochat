@@ -36,18 +36,21 @@ useEffect(() => {
 }, []);
  
 useEffect(() => {
-  console.log("Redirigiendo por error", error);
+  console.log("Verificando error:", error);
   if (error) {
     // Si hay un error, redirigir al login con el mensaje de error.
-    console.log("Redirigiendo por error", error);
+    console.log("Redirigiendo por error:", error);
     navigate(`/?errorMessage=${encodeURIComponent(error)}`);
-  }  
+  } else {
+    console.log("No existe error alguno")
+  }
 }, [token, error, navigate]);
 
  
 
-  // Memorizamos el valor del contexto para evitar re-renderizados innecesarios
-  const value = useMemo(() => ({
+// Memorizamos el valor del contexto para evitar re-renderizados innecesarios
+  
+const value = useMemo(() => ({
     token,
     nickName,
     roomId,

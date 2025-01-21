@@ -35,7 +35,7 @@ func main() {
 	utils.LoadEnvironmentVariables()
 
 	filter := &FilteredWriter{
-		allowedClasses: []string{"Main", "BrokerKafka", "KafkaTransformer", "RoomManagement", "ChatServerModule",
+		allowedClasses: []string{"Main", "BrokerNats", "KafkaTransformer", "RoomManagement", "ChatServerModule",
 			"ChatServerModule", "UserManagement", "LocalRoom", "HandleNewMessages", "HandleGetUsersMessage", "MongoPersistence"},
 		writer: io.Discard, // Initially don't log anywhere
 	}
