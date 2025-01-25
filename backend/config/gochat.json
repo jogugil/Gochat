@@ -1,5 +1,5 @@
 {
-  "broker_type": "kafka",
+  "broker_type": "nats",
   
   "gochat": {
     "login": {
