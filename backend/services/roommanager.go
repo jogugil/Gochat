@@ -133,12 +133,7 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 
 	// Registrar el callback para el topic
 	topic := server_topic
-	subject, errs := rm.MainRoom.MessageBroker.GetSubjectByTopic(topic)
-	if errs {
-		log.Printf("RoomManagement: LoadFixedRoomsFromFile: error - subject, err := rm.MainRoom.MessageBroker.GetSubjectByTopic(topic)\n")
-		return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - subject, err := rm.MainRoom.MessageBroker.GetSubjectByTopic(topic)")
-	}
-	err := msgBroker.OnMessage(subject, HandleNewMessages)
+	err := msgBroker.OnMessage(topic, HandleNewMessages)
 	if err != nil {
 		return err
 	}
@@ -224,13 +219,7 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado mende usuarios\n ")
 		} else {
 			log.Printf("RoomManagement: LoadFixedRoomsFromFile: operationsConfig ok getUsersTopic :[%s]\n", getUsersTopic)
-			subjectU, errs := rm.MainRoom.MessageBroker.GetSubjectByTopic(getUsersTopic)
-			if errs {
-				log.Printf("RoomManagement: LoadFixedRoomsFromFile: error - subject, err := rm.MainRoom.MessageBroker.GetSubjectByTopic(topic)\n")
-				return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - subject, err := rm.MainRoom.MessageBroker.GetSubjectByTopic(topic)")
-			}
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: operationsConfig ok subjectU :[%s]\n", subjectU)
-			err := msgBroker.OnGetUsers(subjectU, HandleGetUsersMessage)
+			err := msgBroker.OnGetUsers(getUsersTopic, HandleGetUsersMessage)
 			if err != nil {
 				return err
 			}
@@ -241,13 +230,7 @@ func (rm *RoomManagement) LoadFixedRoomsFromFile(configFile string) error {
 			log.Printf("RoomManagement: LoadFixedRoomsFromFile: ERROR -- No se pudo añadir gestion listado de mensajes\n")
 		} else {
 			log.Printf("RoomManagement: LoadFixedRoomsFromFile: operationsConfig ok getMessagesTopic :[%s]\n", getMessagesTopic)
-			subjectM, errs := rm.MainRoom.MessageBroker.GetSubjectByTopic(getMessagesTopic)
-			if errs {
-				log.Printf("RoomManagement: LoadFixedRoomsFromFile: error - subject, err := rm.MainRoom.MessageBroker.GetSubjectByTopic(topic)\n")
-				return fmt.Errorf("RoomManagement: LoadFixedRoomsFromFile: error - subject, err := rm.MainRoom.MessageBroker.GetSubjectByTopic(topic)")
-			}
-			log.Printf("RoomManagement: LoadFixedRoomsFromFile: operationsConfig ok subjectM :[%s]\n", subjectM)
-			err := msgBroker.OnGetMessage(subjectM, HandleGetMessage)
+			err := msgBroker.OnGetMessage(getMessagesTopic, HandleGetMessage)
 			if err != nil {
 				return err
 			}

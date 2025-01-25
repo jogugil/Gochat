@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { sendMessage, handleNatsMessageWrapper, handleNatsGetAliveUsersWrapper } from '../api/api';
+import { sendMessage, handleNatsMessageWrapper, handleNatsGetAliveUsersWrapper, requestActiveUsers } from '../api/api';
 import { useAuth } from './AuthContext';  // Importamos el contexto de autenticación
 import { Room } from '../models/Room';
 import { Message, UUID } from "../models/Message";
@@ -192,7 +192,7 @@ const Chat = () => {
 
 
 const connectToNats = async () => {
-  console.log("DEntro de onst connectToNats = async ()")
+  console.log("Dentro de onst connectToNats = async ()")
   if (!isAuthenticated || !userChat) {
     console.error('Usuario no autenticado. No se puede conectar a NATS.');
     return;
@@ -211,7 +211,7 @@ const connectToNats = async () => {
             // Actualiza el estado de NatsManager
             setNatsManager(createdNatsManager);
             console.log('Conexión a NATS establecida para el usuario:', userChat.nickname);
-            console.log (natsManager)
+            console.log (createdNatsManager)
             // Una vez que todo esté listo, actualizamos el estado para que continúe el flujo
             setShouldConnectToNats(true);
             console.log("Consumidores y productores creados correctamente.");
@@ -239,17 +239,17 @@ const pushCallback = async () => {
   if (natsManager && userChat) {
     console.log("--> Dentro de const pushCallback = async () => { ")
     // Obtener los valores de los topics directamente desde WebNatsManager
-    const mainRoomTopic = VITE_MAINROOM_TOPIC|| "principal"; // Default a "principal" si no está definido
-    const usersTopic = VITE_GET_USERS_TOPIC || "roomlistusers"; // Default a "roomlistusers" si no está definido
+    const mainRoomTopic = VITE_MAINROOM_TOPIC  || "principal";     // Default a "principal" si no está definido
+    const usersTopic    = VITE_GET_USERS_TOPIC || "roomlistusers"; // Default a "roomlistusers" si no está definido
 
     // Asignar el callback handleNatsMessageWrapper al consumidor para el tema principal
-    natsManager.assignCallback(mainRoomTopic, handleNatsMessageWrapper(setMessages), true);
+    natsManager.assignCallbackPullConsumer(mainRoomTopic, handleNatsMessageWrapper(setMessages), true);
     console.log(`--> Callback asignado para el consumidor ${mainRoomTopic}.client`);
 
     // Asignar el callback handleNatsGetAliveUsersWrapper al consumidor para el tema específico de roomlistusers
     const userRoomTopic = usersTopic; // El tema se crea dinámicamente con el nickname del usuario
     // Asignar el callback de usuarios vivos
-    natsManager.assignCallback(usersTopic, handleNatsGetAliveUsersWrapper(setAliveUsers), false);
+    natsManager.assignCallbackPullConsumer(usersTopic, handleNatsGetAliveUsersWrapper(setAliveUsers), false);
     console.log(`--> Callback asignado para el consumidor de usuarios vivos: ${usersTopic}.client`);
   }
 }
@@ -283,7 +283,8 @@ const loadAliveUsers = async () => {
       console.log('Usuarios activos:datosCliente:', datosCliente);
       if ( userChat &&  natsManager) {
         // --123-- Aqui debe llegar el mensaje JSON del servidor GoChat. lista de usaurios activos Del topic ""userChat.nickname.client"""
-      
+        requestActiveUsers(natsManager,userChat.roomId,userChat.token, userChat.nickname, datosCliente)
+     
         // Parsear la respuesta JSON
         /*const data: ResponseUser = JSON.parse(response);  // --123-- Asegúrar de que la respuesta es un JSON. Tenmemos que deserializr elk objeto NatsMessage
         console.log('Usuarios activos:data :', data );
@@ -385,7 +386,11 @@ useEffect(() => {
     console.log("Usuario autenticado y nickname no vacío. Conectando a Nats...");
     connectToNats();
   } else {
-    console.log("No se conecta a Nats, no se cumplen las condiciones.");
+    if (!shouldConnectToNats) {
+      console.log("No se conecta a Nats, no se cumplen las condiciones.");
+    } else {
+      console.log("Conexión Nats ya está establecida")
+    }
   }
 }, [isAuthenticated, userChat, shouldConnectToNats]);
 
@@ -402,6 +407,7 @@ useEffect(() => {
     console.log("Llamando a pushCallback para la conexión.");
     pushCallback();
     setCallbackExecuted(true);  // Marca que la función ya fue ejecutada
+    loadAliveUsers ();  // Carga los usuarios conectados
   } else {
     console.log("No se  llama a pushCallback porque no se cumplen las condiciones.");
   }
@@ -415,7 +421,7 @@ useEffect(() => {
 
 // UseEffect para comenzar updates una vez que userChat, room y nats.connect estén listos
 useEffect(() => {
-  // Solo ejecutar startUpdates cuando userChat, room, y el WebSocket estén listos
+ 
   if (userChat && natsManager?.isConnected && !initialized) {
     console.log("Se ejecuta setInitialized para crear el objeto room.");
     if (!initialized) {
@@ -426,13 +432,7 @@ useEffect(() => {
   }
 }, [userChat, natsManager?.isConnected]);
 
-// UseEffect para obtener los mensajes de la sala cuando room._roomid cambia
-useEffect(() => {
-  if (userChat && natsManager?.isConnected && initialized) {
-    console.log("Llamando a startUpdates para obtener mensajes y usuarios activos.");
-    startUpdates(); // Activa los mensajes periódicos
-  }
-}, [room?._roomid]);
+ 
 
 // UseEffect para mostrar el error de conexión si se detecta un problema
 useEffect(() => {

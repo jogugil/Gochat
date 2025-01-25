@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,6 +95,7 @@ type RequestListuser struct {
 	RoomId      uuid.UUID `json:"roomid"`
 	TokenSesion string    `json:"tokensesion"`
 	Nickname    string    `json:"nickname"`
+	Request     string    `json:"request"`
 	Operation   string    `json:"operation"`
 	Topic       string    `json:"topic"`
 	X_GoChat    string    `json:"x_gochat"`
@@ -259,6 +262,146 @@ func createStreamWithoutConflict(js nats.JetStreamContext, streamName string, su
 	return streamName, nil
 }
 
+// Función auxiliar para verificar si un elemento ya está en la lista
+func contains(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
+}
+func CheckTopicConflicts(js nats.JetStreamContext, topics []string) ([]string, error) {
+	var conflictingStreams []string
+
+	// Obtener todos los nombres de los streams
+	streams := js.StreamNames()
+	if streams == nil {
+		return nil, fmt.Errorf("error al obtener los nombres de los streams")
+	}
+
+	// Iterar sobre los streams para verificar conflictos
+	for streamName := range streams {
+		// Verificar si el nombre del stream coincide con algún tópico
+		for _, currentTopic := range topics {
+			if streamName == currentTopic {
+				if !contains(conflictingStreams, streamName) {
+					conflictingStreams = append(conflictingStreams, streamName)
+					fmt.Printf("utilsnats: conflicto detectado - nombre del stream: %s coincide con el tópico: %s\n", streamName, currentTopic)
+				}
+			}
+		}
+
+		// Obtener información del stream
+		streamInfo, err := js.StreamInfo(streamName)
+		if err != nil {
+			fmt.Printf("utilsnats: error al obtener información del stream '%s': %v\n", streamName, err)
+			continue
+		}
+
+		// Comparar los tópicos del stream con los tópicos actuales
+		for _, streamTopic := range streamInfo.Config.Subjects {
+			for _, currentTopic := range topics {
+				if streamTopic == currentTopic {
+					// Agregar el stream conflictivo a la lista si aún no está
+					if !contains(conflictingStreams, streamName) {
+						conflictingStreams = append(conflictingStreams, streamName)
+					}
+					fmt.Printf("utilsnats: conflicto detectado - stream: %s, tópico conflictivo: %s\n", streamName, currentTopic)
+				}
+			}
+		}
+	}
+
+	return conflictingStreams, nil
+}
+func CreateStreamForTopic(js nats.JetStreamContext, prefixStreamName string, topic string) error {
+	// Crear el streamName único para cada topic
+	streamName := prefixStreamName + "_" + strings.ReplaceAll(topic, ".", "_") // Concatenamos el stream con el nombre del topic
+	log.Printf("BrokerNats: CreateStreamForTopic: Creando el Stream (%s) para el topic %s con el streamName %s\n", streamName, topic, streamName)
+	// Verificar si el nombre del stream es válido
+	isValid := isValidStreamName(streamName)
+	log.Printf("BrokerNats: El nombre del stream es válido? %v\n", isValid) // Cambio aquí
+	// Verificar si el stream ya existe
+	streamInfo, err := js.StreamInfo(streamName)
+	if err == nil {
+		// El stream existe, asociamos el subject con el mismo nombre que el stream
+		log.Printf("BrokerNats: El stream %s ya existe para el topic %s. Asegurando que el subject esté asociado al nombre del stream.\n", streamName, topic)
+
+		// Verificar si el stream ya tiene el subject correspondiente
+		if !containsSub(streamInfo.Config.Subjects, streamName) {
+			// Si el subject no coincide, actualizamos el stream
+			log.Printf("BrokerNats: El stream %s existe pero el subject no coincide. Actualizando...\n", streamName)
+
+			// Configuración actualizada del stream
+			streamConfig := &nats.StreamConfig{
+				Name:     streamName,           // Nombre del stream
+				Subjects: []string{streamName}, // El subject debe coincidir con el nombre del stream
+			}
+
+			// Actualizar el stream
+			_, err := js.UpdateStream(streamConfig)
+			if err != nil {
+				return fmt.Errorf("error al actualizar el stream (%s) para el topic %s: %v", streamName, topic, err)
+			}
+			log.Printf("BrokerNats: El stream %s ha sido actualizado con el subject correcto.\n", streamName)
+		}
+		return nil
+	} else if err.Error() == nats.ErrStreamNotFound.Error() {
+		// Si el stream no existe, continuar con la creación del stream
+	} else {
+		// Si ocurrió un error distinto a que el stream no existe
+		return fmt.Errorf("error al verificar el stream %s para el topic %s: %v", streamName, topic, err)
+	}
+
+	// Verificar conflictos con los streams existentes usando CheckTopicConflicts
+	conflictingStreams, err := CheckTopicConflicts(js, []string{topic})
+	if err != nil {
+		return fmt.Errorf("error al verificar los conflictos de topic %s: %v", topic, err)
+	}
+
+	// Si hay streams conflictivos, eliminarlos antes de crear el nuevo stream
+	for _, conflictingStream := range conflictingStreams {
+		log.Printf("BrokerNats: CreateStreamForTopic: Stream conflictivo encontrado (%s), eliminando el stream.\n", conflictingStream)
+		err := js.DeleteStream(conflictingStream)
+		if err != nil {
+			return fmt.Errorf("error al eliminar el stream %s: %v", conflictingStream, err)
+		}
+		log.Printf("BrokerNats: CreateStreamForTopic: Stream %s eliminado con éxito.\n", conflictingStream)
+	}
+
+	// Configurar el stream para el topic
+	streamConfig := &nats.StreamConfig{
+		Name:     streamName,           // Usamos el streamName único
+		Subjects: []string{streamName}, // Vinculamos el stream al topic . REalmente el subhject no es el topic. el subject debe tener el mismo nombre que el stream
+	}
+
+	// Crear el stream
+	_, err = js.AddStream(streamConfig)
+	if err != nil {
+		return fmt.Errorf("error al crear el stream (%s) para el topic %s: %v", streamName, topic, err)
+	}
+
+	log.Printf("BrokerNats: CreateStreamForTopic: Stream creado con éxito para el topic %s con el streamName %s\n", topic, streamName)
+	return nil
+}
+
+func containsSub(subjects []string, subject string) bool {
+	for _, s := range subjects {
+		if s == subject {
+			return true
+		}
+	}
+	return false
+}
+
+// Función auxiliar para validar nombres de streams
+func isValidStreamName(name string) bool {
+	// Verifica que el nombre sea alfanumérico y permita guiones bajos y puntos
+	validName := regexp.MustCompile(`^[a-zA-Z0-9._]+$`)
+	return validName.MatchString(name)
+}
+
 // Función para comparar si dos listas de subjects son iguales
 func equalSubjects(subjects1, subjects2 []string) bool {
 	fmt.Printf("Comparando subjects:\n")
@@ -422,8 +565,17 @@ func SetupConsumer(js nats.JetStreamContext, topic string, streamName string, co
 
 // Función para conectar a NATS, enviar mensajes y recibir respuestas de forma concurrente
 func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
-	// Conectarse al servidor NATS
-	nc, err := nats.Connect(nats.DefaultURL)
+	// Datos de usuario y contraseña
+	user := "user"
+	password := "user123"
+
+	// Crear opciones de conexión con el usuario y la contraseña
+	opts := []nats.Option{
+		nats.UserInfo(user, password), // Autenticación con usuario y contraseña
+	}
+
+	// Conectarse al servidor NATS utilizando las opciones
+	nc, err := nats.Connect(nats.DefaultURL, opts...)
 	if err != nil {
 		log.Fatalf("Error al conectar a NATS: %v", err)
 	}
@@ -434,26 +586,31 @@ func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
 		log.Fatalf("Error al acceder a JetStream: %v", err)
 	}
 
+	// Crear el nombre del stream correctamente
+	streamName := "MYGOCHAT_STREAM_" + strings.ReplaceAll("principal.server", ".", "_")
+
 	// Verificar si el stream 'principal' ya existe
 	// Intentar crear el stream sin conflictos
-	streamName, err := createStreamWithoutConflict(js, "principal", []string{"principal.client"})
-	if err != nil {
-		log.Fatalf("Error al manejar el stream: %v", err)
+	streamName, err2 := createStreamWithoutConflict(js, streamName, []string{streamName})
+	if err2 != nil {
+		log.Fatalf("Error al manejar el stream: %v", err2)
 	}
-	topic := "principal.client"
-	consumerName := "principal-consumer"
-	SetupConsumer(js, topic, streamName, consumerName)
+
+	// Usar streamName para crear el consumidor
+	consumerName := streamName + "-consumer"
+	SetupConsumer(js, streamName, streamName, consumerName)
+
 	// Enviar mensajes al servidor después de la suscripción
 	msg1 := GenerateMessage1(nickname, token, roomId, roomName)
 	msg2 := GenerateMessage2(nickname, token, roomId, roomName)
 
 	// Convertir los mensajes a NatsMessage
-	natsMsg1, err := ConvertToNatsMessage("principal.server", msg1)
+	natsMsg1, err := ConvertToNatsMessage(streamName, msg1)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return nil
 	}
-	natsMsg2, err := ConvertToNatsMessage("principal.server", msg2)
+	natsMsg2, err := ConvertToNatsMessage(streamName, msg2)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return nil
@@ -466,11 +623,11 @@ func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
 	}
 
 	// Enviar el mensaje al servidor
-	err = nc.Publish("principal.server", msgBytes1)
+	err = nc.Publish(streamName, msgBytes1)
 	if err != nil {
 		log.Fatalf("Error al enviar el mensaje al servidor: %v", err)
 	}
-	fmt.Println("Mensaje enviado a principal.server:", string(msgBytes1))
+	fmt.Println("Mensaje enviado a", streamName+":", string(msgBytes1))
 
 	// Convertir el mensaje 2 a JSON
 	msgBytes2, err := json.Marshal(natsMsg2)
@@ -479,11 +636,11 @@ func connectToNATS(token, roomId, roomName, nickname string) *nats.Conn {
 	}
 
 	// Enviar el mensaje al servidor
-	err = nc.Publish("principal.server", msgBytes2)
+	err = nc.Publish(streamName, msgBytes2)
 	if err != nil {
 		log.Fatalf("Error al enviar el mensaje al servidor: %v", err)
 	}
-	fmt.Println("Mensaje enviado a principal.server:", string(msgBytes2))
+	fmt.Println("Mensaje enviado a", streamName+":", string(msgBytes2))
 
 	// Esperar un tiempo para que el goroutine reciba las respuestas antes de finalizar
 	time.Sleep(10 * time.Second) // Ajustar el tiempo de espera según sea necesario
@@ -613,6 +770,7 @@ func CreateNatsMessage(msg RequestListuser) (NatsMessage, error) {
 		"Nickname":    msg.Nickname,
 		"RoomId":      msg.RoomId.String(),
 		"Operation":   msg.Operation,
+		"Request":     msg.Request,
 		"Topic":       msg.Topic,
 		"TokenSesion": msg.TokenSesion,
 		"x_gochat":    msg.X_GoChat,
@@ -639,12 +797,25 @@ func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token st
 		if err != nil {
 			fmt.Printf("errorid sala id format: %v\n", err)
 		}
+
+		// Verificar o crear el stream para el cliente con el prefijo
+		prefixStreamName := "MYGOCHAT_STREAM"
+		cltopic := nickname + ".client"
+		clientTopic := prefixStreamName + "_" + strings.ReplaceAll(cltopic, ".", "_")
+
+		err = CreateStreamForTopic(js, prefixStreamName, cltopic)
+		if err != nil {
+			errorChannel <- fmt.Errorf("error al verificar/crear el stream para '%s': %v", clientTopic, err)
+			return
+		}
+
 		requestData := RequestListuser{
 			RoomId:      roomid,
 			TokenSesion: token,
 			Nickname:    nickname,
 			Operation:   "listusers",
-			Topic:       nickname + ".client",
+			Topic:       clientTopic,
+			Request:     clientTopic,
 			X_GoChat:    "http://localhost:8081",
 		}
 
@@ -661,21 +832,15 @@ func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token st
 
 		fmt.Printf(" [+] iniciarGestionUsuarios: requestData : [%v]\n", req)
 
-		// Verificar o crear el stream para el cliente
-		clientTopic := nickname + ".client"
-		err = CreateOrUpdateStream(js, "ClientStream", []string{clientTopic})
-		if err != nil {
-			errorChannel <- fmt.Errorf("error al verificar/crear el stream para '%s': %v", clientTopic, err)
-			return
-		}
-
 		// Verificar o crear el stream para el servidor
-		serverTopic := "roomlistusers.server"
-		err = CreateOrUpdateStream(js, "ServerStream", []string{serverTopic})
+		svtopic := "roomlistusers.server"
+		serverTopic := prefixStreamName + "_" + strings.ReplaceAll(svtopic, ".", "_")
+		err = CreateStreamForTopic(js, prefixStreamName, svtopic)
 		if err != nil {
 			errorChannel <- fmt.Errorf("error al verificar/crear el stream para '%s': %v", serverTopic, err)
 			return
 		}
+
 		// Suscribirse al tópico del cliente
 		subscription, err := js.PullSubscribe(clientTopic, "userlist")
 		if err != nil {
@@ -692,7 +857,7 @@ func iniciarGestionUsuarios(js nats.JetStreamContext, nickname, idsala, token st
 		}
 
 		// Recibir la respuesta
-		msgs, err := subscription.Fetch(1, nats.MaxWait(35*time.Second)) // Timeout de 5 segundos
+		msgs, err := subscription.Fetch(1, nats.MaxWait(35*time.Second)) // Timeout de 35 segundos
 		if err != nil {
 			errorChannel <- fmt.Errorf("error al recibir la respuesta o timeout: %v", err)
 			return

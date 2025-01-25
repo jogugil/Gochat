@@ -8,6 +8,7 @@ import (
 )
 
 func HandleGetUsersMessage(msg interface{}) {
+	log.Printf("HandleGetUsersMessage: Datos recibidos: %+v  \n", msg)
 	// Decodificar mensaje entrante
 	requestData, ok := msg.(*entities.RequestListUsers)
 	if !ok {
@@ -87,11 +88,11 @@ func HandleGetUsersMessage(msg interface{}) {
 		X_GoChat:    requestData.X_GoChat,
 	}
 
-	err = secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetUsers(requestData.Topic, &response)
+	err = secMod.RoomManagement.MainRoom.Room.MessageBroker.PublishGetUsers(requestData.Request, &response)
 	if err != nil {
-		log.Printf("HandleGetUsersMessage: Error al publicar la respuesta: %v", err)
+		log.Printf("HandleGetUsersMessage: Error al publicar la respuesta: %v\n", err)
 	} else {
-		log.Printf("HandleGetUsersMessage: Respuesta enviada al topic %s ", requestData.Topic)
+		log.Printf("HandleGetUsersMessage: Respuesta enviada al topic %s\n", requestData.Topic)
 	}
 }
 

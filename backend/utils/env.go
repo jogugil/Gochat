@@ -38,6 +38,8 @@ func ReloadEnvironmentVariables() {
 	envVars["GIN_MODE"] = os.Getenv("GIN_MODE")
 	envVars["GOCHAT_CONFIG_FILE"] = os.Getenv("GOCHAT_CONFIG_FILE")
 	envVars["ALLOWED_ORIGINS"] = os.Getenv("ALLOWED_ORIGINS")
+	envVars["NATS_USER"] = os.Getenv("NATS_USER")
+	envVars["NATS_PASSWD"] = os.Getenv("NATS_PASSWD")
 }
 
 // LoadEnvironmentVariables loads the environment variables from a .env file
@@ -58,6 +60,7 @@ func LoadEnvironmentVariables() {
 
 // GetEnvironmentVariable returns the value of a loaded environment variable
 func GetEnvVariable(variableName string) (string, error) {
+
 	value, exists := envVars[variableName]
 	if !exists {
 		return "", fmt.Errorf("the environment variable %s is not configured", variableName)

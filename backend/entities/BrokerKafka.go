@@ -346,36 +346,36 @@ func (k *BrokerKafka) OnGetMessage(topic string, callback func(interface{})) err
 
 // Publica un mensaje en un tópico específico.
 func (k *BrokerKafka) PublishGetUsers(topic string, message *ResponseListUser) error {
-	log.Printf("BrokerKafka: PublishGetUsers: [%s]", topic)
+	log.Printf("BrokerKafka: PublishGetUsers: [%s]\n", topic)
 
 	// Verificar si el topic existe.
 	exists, err := k.topicExists(topic)
 	if err != nil {
-		log.Printf("BrokerKafka: PublishGetUsers: Error al verificar la existencia del topic '%s': %s", topic, err)
+		log.Printf("BrokerKafka: PublishGetUsers: Error al verificar la existencia del topic '%s': %s\n", topic, err)
 		return err
 	}
 
 	// Si el topic no existe, intentar crearlo.
 	if !exists {
-		log.Printf("BrokerKafka: PublishGetUsers: El topic '%s' no existe. Intentando crearlo...", topic)
+		log.Printf("BrokerKafka: PublishGetUsers: El topic '%s' no existe. Intentando crearlo...\n", topic)
 		err := k.createTopic(topic)
 		if err != nil {
 			// Manejar el error si el topic ya existe
 			if strings.Contains(err.Error(), "Topic with this name already exists") {
-				log.Printf("BrokerKafka: PublishGetUsers: Topic '%s' ya existe, continuando con la publicación...", topic)
+				log.Printf("BrokerKafka: PublishGetUsers: Topic '%s' ya existe, continuando con la publicación...\n", topic)
 			} else {
-				log.Printf("BrokerKafka: PublishGetUsers: Error al crear el topic '%s': %s", topic, err)
+				log.Printf("BrokerKafka: PublishGetUsers: Error al crear el topic '%s': %s\n", topic, err)
 				return err
 			}
 		} else {
-			log.Printf("BrokerKafka: PublishGetUsers: Topic '%s' creado exitosamente.", topic)
+			log.Printf("BrokerKafka: PublishGetUsers: Topic '%s' creado exitosamente.\n", topic)
 		}
 	}
 
 	// Transformar el mensaje al formato externo.
 	msgData, err := k.adapter.TransformToExternalUsers(topic, message)
 	if err != nil {
-		log.Printf("BrokerKafka: PublishGetUsers: Error al transformar el mensaje de la app al formato externo: %s", err)
+		log.Printf("BrokerKafka: PublishGetUsers: Error al transformar el mensaje de la app al formato externo: %s\n", err)
 		return err
 	}
 
@@ -386,40 +386,40 @@ func (k *BrokerKafka) PublishGetUsers(topic string, message *ResponseListUser) e
 	}
 	_, _, errsnd := k.producer.SendMessage(msg)
 	if errsnd != nil {
-		log.Printf("BrokerKafka: PublishGetUsers: Error al enviar el mensaje al topic '%s': %s", topic, errsnd)
+		log.Printf("BrokerKafka: PublishGetUsers: Error al enviar el mensaje al topic '%s': %s\n", topic, errsnd)
 		return errsnd
 	}
 
-	log.Printf("BrokerKafka: PublishGetUsers: Mensaje publicado exitosamente en '%s'", topic)
+	log.Printf("BrokerKafka: PublishGetUsers: Mensaje publicado exitosamente en '%s'\n", topic)
 	return nil
 }
 
 // Publica un mensaje en un tópico específico.
 func (k *BrokerKafka) PublishGetMessages(topic string, message *ResponseListMessages) error {
-	log.Printf("BrokerKafka: PublishGetMessages: [%s]", topic)
+	log.Printf("BrokerKafka: PublishGetMessages: [%s]\n", topic)
 
 	// Verificar si el topic existe.
 	exists, err := k.topicExists(topic)
 	if err != nil {
-		log.Printf("BrokerKafka: PublishGetMessages: Error al verificar la existencia del topic '%s': %s", topic, err)
+		log.Printf("BrokerKafka: PublishGetMessages: Error al verificar la existencia del topic '%s': %s\n", topic, err)
 		return err
 	}
 
 	// Si el topic no existe, crearlo.
 	if !exists {
-		log.Printf("BrokerKafka: PublishGetMessages: El topic '%s' no existe. Intentando crearlo...", topic)
+		log.Printf("BrokerKafka: PublishGetMessages: El topic '%s' no existe. Intentando crearlo...\n", topic)
 		err := k.createTopic(topic)
 		if err != nil {
-			log.Printf("BrokerKafka: PublishGetMessages: Error al crear el topic '%s': %s", topic, err)
+			log.Printf("BrokerKafka: PublishGetMessages: Error al crear el topic '%s': %s\n", topic, err)
 			return err
 		}
-		log.Printf("BrokerKafka: PublishGetMessages: Topic '%s' creado exitosamente.", topic)
+		log.Printf("BrokerKafka: PublishGetMessages: Topic '%s' creado exitosamente.\n", topic)
 	}
 
 	// Transformar el mensaje al formato externo.
 	msgData, err := k.adapter.TransformToExternalMessages(message)
 	if err != nil {
-		log.Printf("BrokerKafka: PublishGetMessages: Error al transformar el mensaje de la app al formato externo: %s", err)
+		log.Printf("BrokerKafka: PublishGetMessages: Error al transformar el mensaje de la app al formato externo: %s\n", err)
 		return err
 	}
 
@@ -430,7 +430,7 @@ func (k *BrokerKafka) PublishGetMessages(topic string, message *ResponseListMess
 	}
 	_, _, errsnd := k.producer.SendMessage(msg)
 	if errsnd != nil {
-		log.Printf("BrokerKafka: PublishGetMessages: Error al enviar el mensaje al topic '%s': %s", topic, errsnd)
+		log.Printf("BrokerKafka: PublishGetMessages: Error al enviar el mensaje al topic '%s': %s\n", topic, errsnd)
 	}
 	return errsnd
 }
@@ -545,13 +545,13 @@ func (k *BrokerKafka) GetRoomMessagesByRoomId(topic string) ([]Message, error) {
 	config.Consumer.Return.Errors = true
 	consumer, err := sarama.NewConsumer([]string{"localhost:9092"}, config)
 	if err != nil {
-		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId: Error creando el consumidor Kafka: %v", err)
+		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId: Error creando el consumidor Kafka: %v\n", err)
 	}
 	defer consumer.Close()
 
 	partitionList, err := consumer.Partitions(topic)
 	if err != nil {
-		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId: Error obteniendo particiones: %v", err)
+		return nil, fmt.Errorf("BrokerKafka: GetRoomMessagesByRoomId: Error obteniendo particiones: %v\n", err)
 	}
 
 	var messages []Message
@@ -611,7 +611,7 @@ func (k *BrokerKafka) GetMessagesFromId(topic string, messageId uuid.UUID) ([]Me
 		if found {
 			var message Message
 			if err := json.Unmarshal(msg.Value, &message); err != nil {
-				log.Printf("BrokerKafka: GetMessagesFromId: error desempaquetando mensaje: %v", err)
+				log.Printf("BrokerKafka: GetMessagesFromId: error desempaquetando mensaje: %v\n", err)
 				continue
 			}
 			messages = append(messages, message)
@@ -721,7 +721,7 @@ func (b *BrokerKafka) CreateTopic(topic string) error {
 	// la función `AdminClient` para crear el tema si es necesario.
 	adminClient, err := sarama.NewClusterAdmin([]string{"localhost:9092"}, nil)
 	if err != nil {
-		return fmt.Errorf("BrokerKafka: CreateTopic:  error creating Kafka admin client: %v", err)
+		return fmt.Errorf("BrokerKafka: CreateTopic:  error creating Kafka admin client: %v\n", err)
 	}
 	defer adminClient.Close()
 
@@ -774,7 +774,7 @@ func (k *BrokerKafka) topicExists(topic string) (bool, error) {
 func (k *BrokerKafka) createTopic(topic string) error {
 	admin, err := sarama.NewClusterAdmin(k.brokers, nil)
 	if err != nil {
-		return fmt.Errorf("BrokerKafka: topicExists: error al crear ClusterAdmin: %w", err)
+		return fmt.Errorf("BrokerKafka: CreateTopic: error al crear ClusterAdmin: %w", err)
 	}
 	defer admin.Close()
 
@@ -785,10 +785,10 @@ func (k *BrokerKafka) createTopic(topic string) error {
 	err = admin.CreateTopic(topic, topicDetail, false)
 	if err != nil {
 		if err == sarama.ErrTopicAlreadyExists {
-			log.Printf("BrokerKafka: topicExists: El topic '%s' ya existe \n", topic)
+			log.Printf("BrokerKafka: CreateTopic: El topic '%s' ya existe \n", topic)
 			return nil
 		}
-		return fmt.Errorf("BrokerKafka: topicExists: error al crear el topic '%s': %w", topic, err)
+		return fmt.Errorf("BrokerKafka: CreateTopic: error al crear el topic '%s': %w", topic, err)
 	}
 	return nil
 }

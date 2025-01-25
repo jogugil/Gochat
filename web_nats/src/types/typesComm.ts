@@ -10,9 +10,9 @@ export interface KafkaMessage {
 }
 export interface NatsMessage {
   subject: string;   // topic name
-  data: Uint8Array;  // Asegurar siempre que value sea siempre un Buffer (nunca null)
+  data:  string | Uint8Array<ArrayBufferLike>;  // Asegurar siempre que value sea siempre un Buffer (nunca null) Uint8Array
   timestamp: string;
-  headers: Record<string, string | Buffer<ArrayBufferLike> | (string | Buffer<ArrayBufferLike>)[] | undefined>;
+  headers:  Record<string, string | Buffer<ArrayBufferLike> | (string | Buffer<ArrayBufferLike>)[] | undefined>;
 }
 export interface LoginResponse {
     status: string;
@@ -84,10 +84,11 @@ export interface JwtPayload {
     roomId: string; // UUID en formato de string
     tokenSesion: string;
     nickname: string;
+    request:string;
     message: string;
     operation: string;
     topic: string;
-    xGoChat: string;
+    X_GoChat: string;
   };
 
 

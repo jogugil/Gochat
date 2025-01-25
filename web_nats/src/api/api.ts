@@ -1,8 +1,7 @@
 import axios from 'axios';
 import { Message, UUID } from '../models/Message'; 
-import { LoginResponse, MessageType, Metadata,  NatsMessage } from '../types/typesComm';
-import {WebSocketManager} from '../comm/WebSocketManager';
-import { NatsManager } from 'comm/WebNatsManager';
+import { LoginResponse, MessageType, Metadata,  NatsMessage, RequestListuser } from '../types/typesComm';
+import { NatsManager, VITE_NATS_PREFIX_STREAMNAME, VITE_GET_USERS_TOPIC } from '../comm/WebNatsManager';
  
  
 const apiUrl = import.meta.env.VITE_API_URL; //'http://localhost:8081';
@@ -176,31 +175,7 @@ requestData := map[string]string{
   "x_gochat":      "http://localhost:8081",
 }
 */
-// Obtener mensajes. Función que realiza la petición para obtener los mensajes
-// Función para manejar la respuesta del WebSocket
-// Definir la función callback para procesar la respuesta
-const serializeMessage = (msg: NatsMessage): string => {
-  // Convertir el Uint8Array a base64 antes de serializar
-  const serializedMsg = {
-    ...msg,
-    data: btoa(String.fromCharCode(...msg.data)), // Convertir Uint8Array a base64
-  };
 
-  // Serializar el objeto completo a JSON
-  return JSON.stringify(serializedMsg);
-};
-  
-// Función para deserializar el mensaje NatsManager desde un string JSON
-const deserializeMessage = (jsonStr: string): NatsManager => {
-  const parsedMsg = JSON.parse(jsonStr);
-
-  // Si hay un campo 'data', convertirlo de base64 a Buffer
-  if (parsedMsg.data) {
-    parsedMsg.data = Buffer.from(parsedMsg.data, 'base64');
-  }
-
-  return parsedMsg;
-};
 export const handleNatsMessageWrapper = (
   setMessages: React.Dispatch<
     React.SetStateAction<Map<string, { nickname: string; message: string }>>
@@ -222,33 +197,45 @@ export const handleNatsMessageWrapper = (
 };
 
 export const handleNatsMessage = (
-  setMessages: React.Dispatch<
-    React.SetStateAction<Map<string, { nickname: string; message: string }>>
-  >
+  setMessages: React.Dispatch<React.SetStateAction<Map<string, { nickname: string; message: string }>>>
 ) => {
   return (msg: NatsMessage) => {
     try {
       console.log("Procesando mensaje:", msg);
 
-      // Deserialización y procesamiento del mensaje
-      const nickname = msg.headers?.nickname;
-      const key = msg.subject ?? "default";
-      const value = msg.data ? Buffer.from(msg.data).toString() : "";
+      // Verifica si el 'nickname' es un Buffer y conviértelo a string utilizando TextDecoder
+      const nickname = msg.headers?.Nickname;
 
-      console.log("Detalles del mensaje:");
-      console.log("  Subject:", key);
-      console.log("  Nickname:", nickname);
-      console.log("  Value:", value);
+      // Usar TextDecoder si es un Uint8Array
+      const nicknameString = nickname instanceof Uint8Array 
+        ? new TextDecoder().decode(nickname) 
+        : String(nickname); // Convertir a string si no es un Uint8Array
 
-      if (typeof nickname === "string") {
-        setMessages((prevMessages) => {
-          const newMessages = new Map(prevMessages);
-          newMessages.set(nickname, { nickname, message: value });
-          return newMessages;
-        });
-      } else {
-        console.error("El campo 'nickname' no es válido:", nickname);
+      if (!nicknameString) {
+        console.error("El campo 'nickname' no es válido o está vacío:", nickname);
+        return; // Si no hay un 'nickname', no procesamos el mensaje
       }
+
+      const key = `${nicknameString}-${msg.timestamp}-${Math.random()}`; // Crear una clave única
+
+      let value = "";
+      if (msg.data) {
+        if (msg.data instanceof Uint8Array) {
+          value = new TextDecoder().decode(msg.data); // Decodificar si es necesario
+        } else {
+          value = msg.data.toString(); // Si los datos ya son texto
+        }
+      }
+
+      console.log("Detalles del mensaje recibido:");
+      console.log("  Nickname (remitente):", nicknameString);
+      console.log("  Message (contenido):", value);
+
+      setMessages((prevMessages) => {
+        const newMessages = new Map(prevMessages); // Mantener los mensajes previos
+        newMessages.set(key, { nickname: nicknameString, message: value }); // Usar la clave generada
+        return newMessages; // Retornar el mapa con todos los mensajes
+      });
     } catch (error) {
       console.error("Error al procesar el mensaje:", error);
     }
@@ -271,31 +258,93 @@ export const handleNatsGetAliveUsersWrapper = (
     }
   };
 };
-
 export const handleNatsGetAliveUsers = (
   setAliveUsers: React.Dispatch<React.SetStateAction<string[]>>
 ) => {
-  return (msg: NatsMessage) => {
+  return (msg: any) => {
+    console.log("********** Inicio de handleNatsGetAliveUsers **********");
+    console.log("Mensaje recibido en handleNatsGetAliveUsers:", msg);
+
     try {
-      console.log("Procesando mensaje para usuarios vivos:", msg);
-
-      // Verificar encabezados necesarios en el mensaje
-      const status = msg.headers?.status;
-      const aliveUsers = msg.headers?.aliveUsers;
-
-      if (status === "OK" && Array.isArray(aliveUsers)) {
-        // Extraer los nicknames de los usuarios vivos
-        const aliveUsersList = aliveUsers.map((user: any) => user.Nickname).filter(Boolean);
-
-        // Actualizar el estado con los usuarios vivos
-        setAliveUsers(aliveUsersList);
-
-        console.log("Usuarios vivos actualizados:", aliveUsersList);
-      } else {
-        console.error("El mensaje no contiene información válida sobre usuarios vivos:", msg);
+      // Verificar si el mensaje existe
+      if (!msg) {
+        console.warn("Mensaje recibido es nulo o indefinido.");
+        return;
       }
+
+      // Verificar la estructura del mensaje (JsMsgImpl)
+      console.log("Propiedades del mensaje recibido:", Object.keys(msg));
+
+      // Verificar si tiene `headers` y `data`
+      console.log("Headers del mensaje:", msg.headers);
+      console.log("Datos crudos del mensaje:", msg.data);
+
+      // El dato relevante está en msg.headers.AliveUsers, que es un JSON en formato string.
+      const aliveUsersString = msg.headers?.AliveUsers;
+
+      // Verificar si AliveUsers está presente y es una cadena de texto
+      if (typeof aliveUsersString === "string") {
+        try {
+          // Intentar parsear el JSON de AliveUsers
+          const aliveUsers = JSON.parse(aliveUsersString);
+          console.log("Lista de usuarios vivos deserializada:", aliveUsers);
+
+          // Filtrar los nicknames de los usuarios activos
+          const aliveUserNicknames = aliveUsers.map((user: any) => user?.nickname).filter(Boolean);
+
+          // Actualizar el estado con los nicknames de los usuarios vivos
+          setAliveUsers(aliveUserNicknames);
+          console.log("Estado actualizado con los usuarios vivos:", aliveUserNicknames);
+        } catch (error) {
+          console.error("Error al intentar parsear el JSON de AliveUsers:", error);
+        }
+      } else {
+        console.warn("El campo 'AliveUsers' no contiene un JSON válido.");
+      }
+
     } catch (error) {
       console.error("Error procesando el mensaje de usuarios vivos:", error);
     }
+
+    console.log("********** Fin de handleNatsGetAliveUsers **********");
   };
 };
+// Función para solicitar la lista de usuarios activos
+export async function requestActiveUsers(
+  natsManager: NatsManager,
+  roomId: string, 
+  tokenSesion: string, 
+  nickname: string, 
+  X_GoChat: string
+): Promise<string> {
+  const topic =  VITE_GET_USERS_TOPIC;
+  const subject = `${VITE_NATS_PREFIX_STREAMNAME}_${VITE_GET_USERS_TOPIC}_server`;
+  const request = `${VITE_NATS_PREFIX_STREAMNAME}_${nickname}_client`;
+  try {
+    // Crear el mensaje RequestListuser
+    const message: RequestListuser = {
+      roomId,
+      tokenSesion,
+      nickname,
+      request:request,
+      message: 'Solicitud de usuarios activos',
+      operation: 'listUsers',
+      topic: subject,
+      X_GoChat:X_GoChat,
+    };
+
+    // Enviar el mensaje utilizando el método de natsManager
+    await natsManager.publisRequestListUsershMessage(message, topic);
+
+    // Si todo va bien, devolvemos 'ok'
+    return 'ok';
+  } catch (error) {
+    // Si ocurre algún error, lo capturamos y lo mostramos
+    console.error('Error al enviar la solicitud de lista de usuarios:', error);
+    return `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function uuidv4() {
+  throw new Error('Function not implemented.');
+}

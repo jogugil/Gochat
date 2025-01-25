@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,10 +21,10 @@ func NewKafkaTransformer() *KafkaTransformer {
 }
 func (k *KafkaTransformer) BuildMessage(key, value string, headers map[string]interface{}) *KafkaMessage {
 	return &KafkaMessage{
-		Key:     key,
-		Value:   value,
+		Key:       key,
+		Value:     value,
 		Timestamp: time.Now(),
-		Headers: headers,
+		Headers:   headers,
 	}
 }
 func (k *KafkaTransformer) TransformFromExternalToGetMessage(rawMsg []byte) (*RequestListMessages, error) {
@@ -51,16 +52,18 @@ func (k *KafkaTransformer) TransformFromExternalToGetMessage(rawMsg []byte) (*Re
 		operation := k.getHeaderValue(reqMessage, "operation", "")
 
 		nickname := k.getHeaderValue(reqMessage, "nickname", "")
+
 		token := k.getHeaderValue(reqMessage, "tokensesion", "")
 		topic := k.getHeaderValue(reqMessage, "topic", "")
 		X_GoChat := k.getHeaderValue(reqMessage, "x_gochat", "")
 
 		//mensaje interno
 		msgapp := &RequestListMessages{
-			RoomId:        roomId,
-			TokenSesion:   token, //
-			Nickname:      nickname,
-			Operation:     operation,
+			RoomId:      roomId,
+			TokenSesion: token, //
+			Nickname:    nickname,
+			Operation:   operation,
+
 			LastMessageId: lastmessageid,
 			Topic:         topic,
 			X_GoChat:      X_GoChat,
@@ -93,6 +96,7 @@ func (k *KafkaTransformer) TransformFromExternalToGetUsers(rawMsg []byte) (*Requ
 
 		nickname := k.getHeaderValue(reqMessage, "Nickname", "")
 		token := k.getHeaderValue(reqMessage, "TokenSesion", "")
+		request := k.getHeaderValue(reqMessage, "request", "")
 		topic := k.getHeaderValue(reqMessage, "Topic", "")
 		X_GoChat := k.getHeaderValue(reqMessage, "x_gochat", "")
 
@@ -101,6 +105,7 @@ func (k *KafkaTransformer) TransformFromExternalToGetUsers(rawMsg []byte) (*Requ
 			RoomId:      roomId,
 			TokenSesion: token, //
 			Nickname:    nickname,
+			Request:     request,
 			Topic:       topic,
 			X_GoChat:    X_GoChat,
 		}
@@ -220,11 +225,22 @@ func (k *KafkaTransformer) TransformToExternal(message *Message) ([]byte, error)
 	return rawMsg, nil
 }
 func (k *KafkaTransformer) getHeaderValue(headers map[string]interface{}, key, defaultValue string) string {
-	if value, exists := headers[key]; exists {
-		log.Printf("KafkaTransformer: getHeaderValue: value :%s", value)
+	// Convertir la clave de búsqueda a minúsculas
+	key = strings.ToLower(key)
+
+	// Crear un nuevo mapa con las claves en minúsculas
+	lowerHeaders := make(map[string]interface{})
+	for k, v := range headers {
+		lowerHeaders[strings.ToLower(k)] = v
+	}
+
+	// Buscar la clave en el mapa de headers con claves en minúsculas
+	if value, exists := lowerHeaders[key]; exists {
+		log.Printf("NatsTransformer: getHeaderValue: value :%s", value)
 		return value.(string)
 	}
-	log.Printf("KafkaTransformer: getHeaderValue: defaultValue :%s", defaultValue)
+
+	log.Printf("NatsTransformer: getHeaderValue: defaultValue :%s", defaultValue)
 	return defaultValue
 }
 

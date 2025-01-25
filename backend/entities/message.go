@@ -22,8 +22,8 @@ const (
 type KafkaMessage struct {
 	Key       string                 `json:"key"`
 	Value     string                 `json:"value"`
-	Headers   map[string]interface{} `json:"headers"`
 	Timestamp time.Time              `json:"timestap"`
+	Headers   map[string]interface{} `json:"headers"`
 }
 
 // NatsMessage represents the structure of a message in NATS
@@ -71,6 +71,7 @@ type RequestListUsers struct {
 	RoomId      uuid.UUID `json:"roomid"`
 	TokenSesion string    `json:"tokensesion"`
 	Nickname    string    `json:"nickname"`
+	Request     string    `json:"request"`
 	Topic       string    `json:"topic"`
 	X_GoChat    string    `json:"x_gochat"`
 }

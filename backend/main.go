@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -35,8 +36,8 @@ func main() {
 	utils.LoadEnvironmentVariables()
 
 	filter := &FilteredWriter{
-		allowedClasses: []string{"Main", "BrokerNats", "KafkaTransformer", "RoomManagement", "ChatServerModule",
-			"ChatServerModule", "UserManagement", "LocalRoom", "HandleNewMessages", "HandleGetUsersMessage", "MongoPersistence"},
+		allowedClasses: []string{"Main", "BrokerNats", "NatsTransformer", "RoomManagement", "ChatServerModule",
+			"ChatServerModule", "BrokerKafka", "KafkaTransformer", "UserManagement", "LoginHandler", "LocalRoom", "HandleNewMessages", "HandleGetUsersMessage", "NatsTransformer"},
 		writer: io.Discard, // Initially don't log anywhere
 	}
 	log.SetOutput(filter) // Redirect log output to our custom filter
@@ -93,8 +94,34 @@ func main() {
 
 	// Configuración CORS: permitir todos los orígenes en desarrollo.
 	allowedOrigins, _ := utils.GetEnvVariable("ALLOWED_ORIGINS")
+
+	if allowedOrigins == "" {
+		log.Println("ALLOWED_ORIGINS no está configurado, usando valores por defecto.")
+		allowedOrigins = "http://localhost:5174,http://localhost:5173" // Valores por defecto para desarrollo
+	}
+	// Dividir los orígenes permitidos en un slice
+	allowedOriginsList := strings.Split(allowedOrigins, ",")
+
+	// Permitir cualquier origen con 'localhost' en el dominio, sin importar el puerto
+	// Esto es para permitir cualquier puerto en localhost
+	var filteredOrigins []string
+	for _, origin := range allowedOriginsList {
+		parsedOrigin, err := url.Parse(origin)
+		if err == nil && parsedOrigin.Hostname() == "localhost" {
+			filteredOrigins = append(filteredOrigins, origin)
+		}
+	}
+	// En producción, sóslo restringir a dominios específicos (allowedOrigins)
+	if env := os.Getenv("ENV"); env == "production" {
+		// Restringir solo a orígenes específicos para producción
+		filteredOrigins = []string{
+			"http://localhost:5174",
+		}
+	}
+	log.Printf("Main: ALLOWED_ORIGINS configurado como: %s\n", allowedOrigins)
+	log.Printf("Main: ALLOWED_ORIGINS configurado como: %s\n", allowedOriginsList)
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{allowedOrigins}, // --123-- ojo!! Debemos Cambiar  el * esto en producción para especificar orígenes. MEor mediante variabl entorno.
+		AllowOrigins:     allowedOriginsList, // --123-- ojo!! Debemos Cambiar  el * esto en producción para especificar orígenes. MEor mediante variabl entorno.
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "x_gochat"},
 		AllowCredentials: true,
@@ -123,7 +150,7 @@ func main() {
 			return
 		}
 
-		log.Printf("Main: Servidor: goChatHeader recibido: %s", goChatHeader)
+		log.Printf("Main: Servidor: goChatHeader recibido: %s\n", goChatHeader)
 		c.Next()
 	})
 
@@ -145,8 +172,8 @@ func main() {
 	// Rutas de login y logout
 	r.POST("/login", func(c *gin.Context) {
 		// Verificar que la solicitud de login está llegando
-		log.Printf("Main: Solicitud de login recibida en /login")
-		log.Printf("Main: Cabeceras recibidas: %+v", c.Request.Header)
+		log.Printf("Main: Solicitud de login recibida en /login\n")
+		log.Printf("Main: Cabeceras recibidas: %+v\n", c.Request.Header)
 		// Llamar al controlador de login
 		api.LoginHandler(c)
 	})
@@ -155,21 +182,21 @@ func main() {
 	// Configurar el servidor
 	server, err := utils.GetEnvVariable("NameServer")
 	if err != nil {
-		log.Printf("Main: Error cargando NameServer, usando 'localhost' por defecto: %v", err)
+		log.Printf("Main: Error cargando NameServer, usando 'localhost' por defecto: %v\n", err)
 		server = "localhost"
 	}
 
 	port, err := utils.GetEnvVariable("PortServer")
 	if err != nil {
-		log.Printf("Main: Error cargando PortServer, usando '8081' por defecto: %v", err)
+		log.Printf("Main: Error cargando PortServer, usando '8081' por defecto: %v\n", err)
 		port = "8081"
 	}
-	log.Printf("Main: Configuración del servidor - NameServer: %s, PortServer: %s", server, port)
+	log.Printf("Main: Configuración del servidor - NameServer: %s, PortServer: %s\n", server, port)
 	address := fmt.Sprintf("%s:%s", server, port)
-	log.Printf("Main: Servidor escuchando en %s", address)
+	log.Printf("Main: Servidor escuchando en %s\n", address)
 
 	// Iniciar servidor HTTP
 	if err := r.Run(address); err != nil {
-		log.Fatalf("Error al iniciar el servidor HTTP: %v", err)
+		log.Fatalf("Error al iniciar el servidor HTTP: %v\n", err)
 	}
 }

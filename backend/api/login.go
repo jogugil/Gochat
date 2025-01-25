@@ -16,12 +16,12 @@ func LoginHandler(c *gin.Context) {
 	}
 
 	// Log de entrada de la solicitud
-	log.Println("Recibiendo datos de solicitud...")
+	log.Printf("LoginHandler: Recibiendo datos de solicitud...[%v]\n", requestData)
 
 	// Decodificar los datos JSON de la solicitud
 	if err := c.ShouldBindJSON(&requestData); err != nil {
 		// Log de error en la decodificación de datos
-		log.Printf("Error al decodificar el JSON de la solicitud: %v", err)
+		log.Printf("LoginHandler: Error al decodificar el JSON de la solicitud: %v\n", err)
 
 		// Si hay un error en el body de la solicitud, devolver un error HTTP 400
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -32,13 +32,13 @@ func LoginHandler(c *gin.Context) {
 	}
 
 	// Log de los datos recibidos
-	log.Println("Datos recibidos de la solicitud:", requestData)
+	log.Printf("LoginHandler: Datos recibidos de la solicitud:[%v]\n", requestData)
 
 	// Obtener la instancia del singleton
 	secMod, err := services.GetChatServerModule()
 	if err != nil {
 		// Si el RoomId no es un UUID válido, devolver un error
-		log.Printf("Error al obtener el servidor chat. : %v", err)
+		log.Printf("LoginHandler: Error al obtener el servidor chat. : %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "nok",
 			"message": "Servicio  chat no disponible",
@@ -46,12 +46,12 @@ func LoginHandler(c *gin.Context) {
 		return
 	}
 	// Llamar a EjecutarLogin con el nickname recibido
-	log.Println("Ejecutando login para el usuario:", requestData.Nickname)
+	log.Printf("LoginHandler: Ejecutando login para el usuario:[%s]\n", requestData.Nickname)
 	usuario, err := secMod.ExecuteLogin(requestData.Nickname)
 
 	if err != nil {
 		// Log del error en el proceso de login
-		log.Printf("Error al ejecutar login para el usuario: %v", err)
+		log.Printf("LoginHandler: Error al ejecutar login para el usuario: %v\n", err)
 
 		// Crear un objeto de respuesta con campos vacíos
 		responseData := gin.H{
@@ -80,7 +80,7 @@ func LoginHandler(c *gin.Context) {
 	}
 
 	// Log de los datos del usuario después del login
-	log.Printf("Login exitoso. Datos del usuario: Token: %s, Nickname: %s, Sala ID: %s, Sala Name: %s\n",
+	log.Printf("LoginHandler: Login exitoso. Datos del usuario: Token: %s, Nickname: %s, Sala ID: %s, Sala Name: %s\n",
 		usuario.Token, usuario.Nickname, usuario.RoomId.String(), usuario.RoomName)
 
 	// Responder con un JSON de éxito si el login es exitoso
@@ -94,7 +94,7 @@ func LoginHandler(c *gin.Context) {
 	}
 
 	// Log de la respuesta enviada
-	log.Println("Enviando respuesta:", responseData)
+	log.Println("LoginHandler: Enviando respuesta:", responseData)
 
 	c.JSON(http.StatusOK, responseData)
 }

@@ -110,6 +110,7 @@ type RequestListUser struct {
 	TokenSesion string    `json:"tokensesion"`
 	Nickname    string    `json:"nickname"`
 	Operation   string    `json:"operation"`
+	Request     string    `json:"request"`
 	Topic       string    `json:"topic"`
 	X_GoChat    string    `json:"x_gochat"`
 }
@@ -315,7 +316,7 @@ func Login(nickname string, apiURL string) (*LoginResponse, error) {
 
 // Conectar al cliente Kafka
 func ConnectTokafka(config map[string]interface{}) (*BrokerKafka, error) {
-	log.Printf("ConnectTokafka: Vamos a conectar y enviar mensajes a kafka")
+	log.Printf("ConnectTokafka: Vamos a conectar y enviar mensajes a kafka\n")
 	// Acceder a la configuración de Kafka
 	kafkaConfigInterface, ok := config["kafka"]
 	if !ok {
@@ -350,7 +351,7 @@ func ConnectTokafka(config map[string]interface{}) (*BrokerKafka, error) {
 	default: // Si no es ninguno de los tipos esperados
 		return nil, fmt.Errorf("ConnectTokafka: 'brokers' debe ser una cadena o una lista")
 	}
-	log.Printf("ConnectTokafka: Vamos a conectar y enviar mensajes a kafka")
+	log.Printf("ConnectTokafka: Vamos a conectar y enviar mensajes a kafka\n")
 	kafkaConfig := sarama.NewConfig()
 	kafkaConfig.Producer.Return.Successes = true // Asegura confirmaciones de mensajes enviados
 	kafkaConfig.Consumer.Return.Errors = true    // Permite manejar errores en el consumidor
@@ -648,17 +649,19 @@ func RequestUserList(bs *BrokerKafka, nickname string, token string, roomId uuid
 		Nickname:    nickname,
 		TokenSesion: token,
 		RoomId:      roomId,
+		Request:     nickname + ".client",
 		Topic:       nickname + ".client",
 		X_GoChat:    "http://localhost:8081",
 	}
-
+	fmt.Printf(" msg: [%v]\n", msg)
 	kafkaMsg, err := ConvertToListuserMessage("roomlistusers.server", msg)
+	fmt.Printf(" kafkaMsg: [%v]\n", kafkaMsg)
 	if err != nil {
 		return fmt.Errorf("error converting to KafkaMessage: %v", err)
 	}
 	errs := SendMessage(bs, "roomlistusers.server", kafkaMsg)
 	if errs != nil {
-		fmt.Printf(" Error al enviar la peticion de usuarios: %v ", errs)
+		fmt.Printf(" Error al enviar la peticion de usuarios: %v\n", errs)
 	}
 	ConsumeClientTopic(bs, nickname+".client", true)
 
@@ -722,6 +725,7 @@ func ConvertToListuserMessage(topic string, msgListUser RequestListUser) (KafkaM
 		"RoomId":      msgListUser.RoomId.String(),
 		"Operation":   msgListUser.Operation,
 		"Topic":       msgListUser.Topic,
+		"Request":     msgListUser.Request,
 		"TokenSesion": msgListUser.TokenSesion,
 		"x_gochat":    msgListUser.X_GoChat,
 	}
@@ -729,7 +733,7 @@ func ConvertToListuserMessage(topic string, msgListUser RequestListUser) (KafkaM
 	// Crear la estructura del mensaje
 	kfkMsg := KafkaMessage{
 		Key:       msgListUser.Topic,
-		Value:     "Petición de lista de usuarios 2", // Mensaje descriptivo en bytes
+		Value:     "Petición de lista de usuarios", // Mensaje descriptivo en bytes
 		Headers:   headers,
 		Timestamp: time.Now(),
 	}
@@ -775,23 +779,23 @@ func SendMessageWithResponse(bs *BrokerKafka, generateMessageFunc func(string, s
 	go func() {
 		err := ConsumeTopic(bs, "principal.client", responseChannel)
 		if err != nil {
-			log.Printf("Error consumiendo del topic 'principal.client': %v", err)
+			log.Printf("Error consumiendo del topic 'principal.client': %v\n", err)
 		}
 	}()
 
 	// Esperar respuesta o timeout
 	select {
 	case msg := <-responseChannel:
-		log.Printf("Respuesta recibida: Key=%s, Value=%s", string(msg.Key), string(msg.Value))
+		log.Printf("Respuesta recibida: Key=%s, Value=%s\n", string(msg.Key), string(msg.Value))
 		// Procesar la respuesta
 		response, err := ProcessResponse(msg.Value)
 		if err != nil {
-			log.Printf("Error procesando la respuesta: %v", err)
+			log.Printf("Error procesando la respuesta: %v\n", err)
 			return err
 		}
 		log.Printf("Respuesta procesada: %v", response)
 	case <-timeoutChannel:
-		log.Printf("Timeout de 1 minuto alcanzado sin recibir respuesta.")
+		log.Printf("Timeout de 1 minuto alcanzado sin recibir respuesta.\n")
 	}
 
 	return nil
@@ -827,7 +831,7 @@ func SendMessageToServer(bs *BrokerKafka, generateMessageFunc func(string, strin
 	if err != nil {
 		return fmt.Errorf("error enviando el mensaje a 'principal.server': %v", err)
 	}
-	log.Printf("Mensaje enviado al topic '%s': %v", topic, message)
+	log.Printf("Mensaje enviado al topic '%s': %v\n", topic, message)
 
 	return nil
 }
@@ -842,7 +846,7 @@ func SendMessageChat(bs *BrokerKafka, topic string, kafkaMessage KafkaMessage) e
 	if err != nil {
 		return fmt.Errorf("error enviando mensaje al topic %s: %v", topic, err)
 	}
-	log.Printf("Mensaje enviado al topic '%s': %v", topic, kafkaMessage)
+	log.Printf("Mensaje enviado al topic '%s': %v\n", topic, kafkaMessage)
 	return nil
 }
 
@@ -859,7 +863,7 @@ func StartConsumingMessages(bs *BrokerKafka, topic string, responseChannel chan 
 		// Intentar crear un consumidor para la partición
 		partitionConsumer, err := bs.consumer.ConsumePartition(topic, 0, sarama.OffsetOldest)
 		if err != nil {
-			log.Printf("Error creando consumer para %s: %v", topic, err)
+			log.Printf("Error creando consumer para %s: %v\n", topic, err)
 			close(responseChannel)
 			return
 		}
@@ -873,7 +877,7 @@ func StartConsumingMessages(bs *BrokerKafka, topic string, responseChannel chan 
 				responseChannel <- msg
 			case <-stopChannel:
 				// Si recibimos la señal para detener, salimos
-				log.Printf("Parando consumidor para el topic %s", topic)
+				log.Printf("Parando consumidor para el topic %s\n", topic)
 				return
 			}
 		}

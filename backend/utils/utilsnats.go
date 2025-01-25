@@ -74,10 +74,29 @@ func CreateStreamForTopic(js nats.JetStreamContext, prefixStreamName string, top
 	isValid := isValidStreamName(streamName)
 	log.Printf("BrokerNats: El nombre del stream es válido? %v\n", isValid) // Cambio aquí
 	// Verificar si el stream ya existe
-	_, err := js.StreamInfo(streamName)
+	streamInfo, err := js.StreamInfo(streamName)
 	if err == nil {
-		// El stream existe, no se hace nada
-		log.Printf("BrokerNats: CreateStreamForTopic: El stream %s ya existe para el topic %s, no se creará uno nuevo.\n", streamName, topic)
+		// El stream existe, asociamos el subject con el mismo nombre que el stream
+		log.Printf("BrokerNats: El stream %s ya existe para el topic %s. Asegurando que el subject esté asociado al nombre del stream.\n", streamName, topic)
+
+		// Verificar si el stream ya tiene el subject correspondiente
+		if !containsSub(streamInfo.Config.Subjects, streamName) {
+			// Si el subject no coincide, actualizamos el stream
+			log.Printf("BrokerNats: El stream %s existe pero el subject no coincide. Actualizando...\n", streamName)
+
+			// Configuración actualizada del stream
+			streamConfig := &nats.StreamConfig{
+				Name:     streamName,           // Nombre del stream
+				Subjects: []string{streamName}, // El subject debe coincidir con el nombre del stream
+			}
+
+			// Actualizar el stream
+			_, err := js.UpdateStream(streamConfig)
+			if err != nil {
+				return fmt.Errorf("error al actualizar el stream (%s) para el topic %s: %v", streamName, topic, err)
+			}
+			log.Printf("BrokerNats: El stream %s ha sido actualizado con el subject correcto.\n", streamName)
+		}
 		return nil
 	} else if err.Error() == nats.ErrStreamNotFound.Error() {
 		// Si el stream no existe, continuar con la creación del stream
@@ -104,8 +123,8 @@ func CreateStreamForTopic(js nats.JetStreamContext, prefixStreamName string, top
 
 	// Configurar el stream para el topic
 	streamConfig := &nats.StreamConfig{
-		Name:     streamName,      // Usamos el streamName único
-		Subjects: []string{topic}, // Vinculamos el stream al topic
+		Name:     streamName,           // Usamos el streamName único
+		Subjects: []string{streamName}, // Vinculamos el stream al topic . REalmente el subhject no es el topic. el subject debe tener el mismo nombre que el stream
 	}
 
 	// Crear el stream
@@ -116,6 +135,15 @@ func CreateStreamForTopic(js nats.JetStreamContext, prefixStreamName string, top
 
 	log.Printf("BrokerNats: CreateStreamForTopic: Stream creado con éxito para el topic %s con el streamName %s\n", topic, streamName)
 	return nil
+}
+
+func containsSub(subjects []string, subject string) bool {
+	for _, s := range subjects {
+		if s == subject {
+			return true
+		}
+	}
+	return false
 }
 
 // Función auxiliar para validar nombres de streams

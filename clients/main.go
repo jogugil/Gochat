@@ -89,7 +89,7 @@ func main() {
 		var config map[string]interface{}
 		config, err := LoadConfig(configFile)
 		if err != nil {
-			log.Printf("error al leer el fichero de configuración : %v", err)
+			log.Printf("error al leer el fichero de configuración : %v\n", err)
 			os.Exit(1)
 		}
 		log.Printf("config:[%s]", config)
@@ -102,13 +102,13 @@ func main() {
 
 		bs, err := clkafka.ConnectTokafka(config)
 		if err != nil {
-			log.Fatalf("Error conectando a Kafka: %v", err)
+			log.Fatalf("Error conectando a Kafka: %v\n", err)
 		}
-		log.Printf("Main: consumdores y productores creados [%v]", bs)
+		log.Printf("Main: consumdores y productores creados [%v]\n", bs)
 		// Consumir mensajes históricos
 		historicalMessages, err := clkafka.ConsumeLastMessages(bs, "principal.client", 100)
 		if err != nil {
-			log.Fatalf("Error consumiendo mensajes históricos: %v", err)
+			log.Fatalf("Error consumiendo mensajes históricos: %v\n", err)
 		}
 		log.Printf("main: Mensajes históricos\n")
 		// Recorrer los mensajes uno por uno

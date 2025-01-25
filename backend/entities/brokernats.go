@@ -58,8 +58,23 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: la URL proporcionada no es una cadena válida")
 	}
 
-	// Conectar a NATS
-	conn, err := nats.Connect(url)
+	// Obtener las credenciales de NATS
+	natsUser, err := utils.GetEnvVariable("NATS_USER")
+	if err != nil {
+		return nil, fmt.Errorf("Error al obtener NATS_USER: %w", err)
+	}
+	natsPasswd, err := utils.GetEnvVariable("NATS_PASSWD")
+	if err != nil {
+		return nil, fmt.Errorf("Error al obtener NATS_PASSWD: %w", err)
+	}
+	// Conectar a NATS con autenticación
+	opts := []nats.Option{
+		nats.UserInfo(natsUser, natsPasswd), // Usar las credenciales cargadas
+	}
+	log.Printf("[*]BrokerNats: natsUser:[%s]  \n", natsUser)
+	log.Printf("[*]BrokerNats: natsPasswd:[%s]  \n", natsPasswd)
+
+	conn, err := nats.Connect(url, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al conectar a NATS:=> %w -- url:[%s]", err, url)
 	}
@@ -70,7 +85,6 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 		conn.Close()
 		return nil, fmt.Errorf("BrokerNats: NewNatsBroker: error al inicializar JetStream: %w", err)
 	}
-
 	// Obtener todos los topics
 	topics, err := utils.GetTopics(config)
 	if err != nil {
@@ -151,6 +165,7 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 				return nil, fmt.Errorf("BrokerNats: error al crear el productor para el tópico %s: %w ", topic, err)
 			}
 			log.Printf("BrokerNats: CreateProducer: Tópico '%s' con nombre '%s' agregado al stream '%s'\n", topic, streamName, streamName)
+			brock.AssignSubjectToTopic(topic, streamName)
 		} else if strings.HasSuffix(topic, ".server") {
 			prefix := strings.TrimSuffix(topic, ".server")
 			consumerName := fmt.Sprintf("%s-user-consumer", prefix)
@@ -169,7 +184,16 @@ func NewNatsBroker(config map[string]interface{}) (MessageBroker, error) {
 
 	// Retornar instancia del broker
 	// ponemos en esta version jsnats:  true,  por defecto. Facilmente se peude añadir el fichero JSON
-
+	subjectU, errs := brock.GetSubjectByTopic("roomlistusers.server")
+	if errs {
+		log.Printf("BrokerNats: NewNatsBroker:subjectU error\n")
+	}
+	log.Printf("BrokerNats: NewNatsBroker:   [%s]\n", subjectU)
+	subjectM, errs := brock.GetSubjectByTopic("principal.server")
+	if errs {
+		log.Printf("BrokerNats: NewNatsBroker:subjectM error\n")
+	}
+	log.Printf("BrokerNats: NewNatsBroker:   [%s]\n", subjectM)
 	log.Printf("BrokerNats: NewNatsBroker: Salgo de NewNatsBroker [%v]\n", brock)
 	return brock, nil
 }
@@ -183,9 +207,9 @@ func (b *BrokerNats) AssignSubjectToTopic(topic string, subject string) {
 func (b *BrokerNats) GetSubjectByTopic(topic string) (string, bool) {
 	value, ok := b.topicToSubject.Load(topic)
 	if ok {
-		return value.(string), true
+		return value.(string), false
 	}
-	return "", false
+	return "", true
 }
 
 func (b *BrokerNats) OnMessage(topic string, callback func(interface{})) error {
@@ -304,6 +328,16 @@ func (b *BrokerNats) OnGetMessage(topic string, callback func(interface{})) erro
 		return err
 	}
 }
+func (b *BrokerNats) contains(slice []string, item string) bool {
+
+	log.Printf("BrokerNats: OnMessageJetStream: contains :I slice: [%v]\n", slice)
+	for _, elem := range slice {
+		if elem == item {
+			return true
+		}
+	}
+	return false
+}
 
 // /Consumidores con Jetstream . invocan a una funcin de calback cad e que se emite un mensaje al topic indicado:
 func (b *BrokerNats) OnMessageJetStream(topic string, callback func(interface{})) error {
@@ -312,23 +346,45 @@ func (b *BrokerNats) OnMessageJetStream(topic string, callback func(interface{})
 	// Usar la instancia de JetStream existente
 	js := b.js
 	if js == nil {
-		log.Println("Error: No se encontró una instancia válida de JetStream.")
-		return fmt.Errorf("no se encontró una instancia válida de JetStream")
+		log.Println("BrokerNats: Error: No se encontró una instancia válida de JetStream.")
+		return fmt.Errorf("BrokerNats: no se encontró una instancia válida de JetStream")
 	}
-
+	subjectML, errML := b.GetSubjectByTopic(topic)
+	if errML {
+		log.Println("BrokerNats: Error: No se encontró el subject correspondiente al topic - subjectML :", topic)
+		return fmt.Errorf("Error: No se encontró el subject correspondiente al topic - subjectML :")
+	}
+	log.Printf("BrokerNats: OnMessageJetStream: INtentando subscribir se al topic: [%s] - subjectML[%s]\n", topic, subjectML)
 	log.Printf("BrokerNats: OnMessageJetStream: Usando instancia de JetStream existente")
 
+	// Verificar si el stream y el subject existen
+	streamInfo, errc := js.StreamInfo(subjectML)
+	if errc != nil {
+		log.Printf("BrokerNats: Error obteniendo información del stream '%s': %v", subjectML, errc)
+		return fmt.Errorf("BrokerNats: error al obtener información del stream '%s': %v", subjectML, errc)
+	}
+
+	log.Printf("BrokerNats: Stream '%s' tiene los siguientes subjects:", subjectML)
+	for _, subj := range streamInfo.Config.Subjects {
+		log.Printf("\t BrokerNats: Subject en el stream: %s", subj)
+	}
+	log.Printf("BrokerNats: Stream '%s' FIN subjects:", subjectML)
+
+	if !b.contains(streamInfo.Config.Subjects, subjectML) {
+		return fmt.Errorf("BrokerNats: El subject '%s' no está asociado al stream '%s'", subjectML, subjectML)
+	}
 	// Suscribirse al topic sin crear un nuevo stream
-	_, err := js.Subscribe(topic, func(m *nats.Msg) {
-		log.Printf("Recibido mensaje en el topic [%s]: %s\n", m.Subject, string(m.Data))
+	_, err := js.Subscribe(subjectML, func(m *nats.Msg) {
+		log.Printf("BrokerNats: Recibido mensaje en el topic [%s] - subjectML:[%s]: %s\n", m.Subject, subjectML, string(m.Data))
 
 		// Construir el mensaje NATS personalizado
 		natsMsg := &NatsMessage{
-			Subject: m.Subject,
+			Subject: subjectML,
 			Data:    m.Data,
 		}
-		log.Printf("natsMsg.Subject: %s\n", natsMsg.Subject)
-		log.Printf("natsMsg.Data: %s\n", natsMsg.Data)
+		log.Printf("BrokerNats: natsMsg.Subject: %s\n", natsMsg.Subject)
+		log.Printf("BrokerNats: natsMsg.Subject: %s\n", natsMsg.Subject)
+		log.Printf("BrokerNats: natsMsg.Data: %s\n", natsMsg.Data)
 
 		// Transformar el mensaje con el adaptador
 		message, err := b.adapter.TransformFromExternal(natsMsg.Data)
@@ -348,14 +404,14 @@ func (b *BrokerNats) OnMessageJetStream(topic string, callback func(interface{})
 			callback(message)
 			// Confirmar el mensaje (opcional)
 			m.Ack()
-			log.Printf("Mensaje confirmado: %s", string(m.Data))
+			log.Printf("BrokerNats: Mensaje confirmado: %s", string(m.Data))
 		}
 
 	}, nats.Durable("durable-consumer"))
 
 	if err != nil {
-		log.Printf("Error al suscribir al tópico: %v", err)
-		return fmt.Errorf("error al suscribir al tópico %s: %v", topic, err)
+		log.Printf("BrokerNats: Error al suscribir al tópico: %v", err)
+		return fmt.Errorf("BrokerNats: error al suscribir al tópico %s: %v", topic, err)
 	}
 
 	log.Printf("BrokerNats: OnMessageJetStream: Suscripción exitosa al topic: [%s]", topic)
@@ -371,12 +427,17 @@ func (b *BrokerNats) OnGetUsersJetStream(topic string, callback func(interface{}
 		log.Println("BrokerNats: OnGetUsersJetStream: Error: No se encontró una instancia válida de JetStream.")
 		return fmt.Errorf("BrokerNats: OnGetUsersJetStream: no se encontró una instancia válida de JetStream")
 	}
-
+	subjectUL, errUL := b.GetSubjectByTopic(topic)
+	if errUL {
+		log.Println("BrokerNats: OnGetUsersJetStream:  Error: No se encontró el subject correspondiente al topic - subjectUL :", topic)
+		return fmt.Errorf("BrokerNats: OnGetUsersJetStream: Error: No se encontró el subject correspondiente al topic - subjectML :")
+	}
+	log.Printf("BrokerNats: OnGetUsersJetStream: INtentando subscribir se al topic: [%s] - subjectUL: [%s]\n", topic, subjectUL)
 	log.Printf("BrokerNats: OnGetUsersJetStream: Usando instancia de JetStream existente")
 
 	// Suscripción al topic sin crear un nuevo stream
-	_, err := js.Subscribe(topic, func(m *nats.Msg) {
-		log.Printf("BrokerNats: OnGetUsersJetStream: Recibido mensaje en el topic [%s]: %s\n", m.Subject, string(m.Data))
+	_, err := js.Subscribe(subjectUL, func(m *nats.Msg) {
+		log.Printf("BrokerNats: OnGetUsersJetStream: Recibido mensaje en el topic [%s] - subjectUL:[%s]: %s\n", m.Subject, subjectUL, string(m.Data))
 
 		// Construir el mensaje NATS personalizado
 		natsMsg := &NatsMessage{
@@ -428,16 +489,21 @@ func (b *BrokerNats) OnGetMessageJetStream(topic string, callback func(interface
 		log.Println("BrokerNats: OnGetMessageJetStream: Error: No se encontró una instancia válida de JetStream.")
 		return fmt.Errorf("BrokerNats: OnGetMessageJetStream: no se encontró una instancia válida de JetStream")
 	}
-
+	subjectGML, errGML := b.GetSubjectByTopic(topic)
+	if errGML {
+		log.Printf("BrokerNats: OnGetUsersJetStream:  Error: No se encontró el subject correspondiente al topic  [%s] - subjectGML : [%s]\n", topic, subjectGML)
+		return fmt.Errorf("BrokerNats: OnGetUsersJetStream: Error: No se encontró el subject correspondiente al topic - subjectGML :")
+	}
+	log.Printf("BrokerNats: OnGetUsersJetStream: INtentando subscribir se al topic: [%s] - subjectUL: [%s]\n", topic, subjectGML)
 	log.Printf("BrokerNats: OnGetMessageJetStream: Usando instancia de JetStream existente")
 
 	// Suscripción al topic sin crear un nuevo stream
-	_, err := js.Subscribe(topic, func(m *nats.Msg) {
-		log.Printf("BrokerNats: OnGetMessageJetStream: Recibido mensaje en el topic [%s]: %s\n", m.Subject, string(m.Data))
+	_, err := js.Subscribe(subjectGML, func(m *nats.Msg) {
+		log.Printf("BrokerNats: OnGetMessageJetStream: Recibido mensaje en el topic [%s] - subjectGML [%s] : %s\n", m.Subject, subjectGML, string(m.Data))
 
 		// Construir el mensaje NATS personalizado
 		natsMsg := &NatsMessage{
-			Subject: m.Subject,
+			Subject: subjectGML,
 			Data:    m.Data,
 		}
 		log.Printf("natsMsg.Subject: %s\n", natsMsg.Subject)
@@ -541,11 +607,16 @@ func (b *BrokerNats) Publish(topic string, message *Message) error {
 		log.Printf("BrokerNats: Publish: Error al transformar el mensaje de la app al formato externo: %s", err)
 		return err
 	}
-	log.Printf("BrokerNats: Publish: topic [%s] --- msgData:[%v]", topic, msgData)
+	subject, errs := b.GetSubjectByTopic(topic)
+	if errs {
+		log.Printf("BrokerNats: Publish: No tenemos subject asociado al topic [%s] \n", topic)
+		return fmt.Errorf("No tenemos subject asociado al topic")
+	}
+	log.Printf("BrokerNats: Publish: topic [%s] - subject :[%s] --- msgData:[%v]", topic, subject, msgData)
 	// Publica el mensaje usando JetStream.
-	ack, err := b.js.Publish(topic, msgData)
+	ack, err := b.js.Publish(subject, msgData)
 	if err != nil {
-		log.Printf("BrokerNats: Publish: topic [%s] --- msgData:[%v]", topic, msgData)
+		log.Printf("BrokerNats: Publish: topic [%s] - subject :[%s] --- msgData:[%v]", topic, subject, msgData)
 		log.Printf("BrokerNats: Publish: Error al publicar mensaje en JetStream: %s", err)
 		return err
 	}
@@ -556,14 +627,14 @@ func (b *BrokerNats) Publish(topic string, message *Message) error {
 
 // Publica un mensaje en un tópico específico.
 func (b *BrokerNats) PublishGetUsers(topic string, message *ResponseListUser) error {
-	log.Printf("BrokerNats: PublishGetUsers: Mensaje ha  ublicar con JetStream. topic: %s, Secuencia: %v\n", topic, message)
+	log.Printf("BrokerNats: PublishGetUsers: Mensaje ha  publicar con JetStream. topic: %s, Secuencia: %v\n", topic, message)
 	// Transforma el mensaje a su formato externo.
 	msgData, err := b.adapter.TransformToExternalUsers(topic, message)
 	if err != nil {
 		log.Printf("BrokerNats: PublishGetUsers: Error al transformar el mensaje de la app al formato externo: %s\n", err)
 		return err
 	}
-	log.Printf("BrokerNats: PublishGetUsers: Mensaje ha  ublicar con JetStream. topic: %s, msgData: %v\n", topic, msgData)
+	log.Printf("BrokerNats: PublishGetUsers: Mensaje ha  publicar con JetStream. topic: %s, msgData: %v\n", topic, msgData)
 	// Publica el mensaje usando JetStream.
 	ack, err := b.js.Publish(topic, msgData)
 	if err != nil {
